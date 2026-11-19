@@ -52,7 +52,8 @@ const DB = {
 };
 
 /* ---------------------------------------------------------- Settings */
-const S = { folder: "Rilievi", name: "", init: "", north: "T", decl: 3.5, quality: 2048, arrow: true };
+const S = { folder: "Rilievi", name: "", init: "", north: "T", decl: 3.5, quality: 2048, arrow: true,
+  provider: "", msClientId: "", gClientId: "", setupDone: false, areteOn: false };
 async function loadSettings() {
   const v = await DB.getKV("settings");
   if (v) Object.assign(S, v);
@@ -113,13 +114,19 @@ const Compass = {
       this.accuracy = null;
     }
     if (mag === null) return;
-    // smorzamento: media esponenziale sul cerchio
-    const k = 0.25;
-    this._vx = this._vx * (1 - k) + Math.sin(toRad(mag)) * k;
-    this._vy = this._vy * (1 - k) + Math.cos(toRad(mag)) * k;
+    // smorzamento contro il tremolio: media esponenziale sul cerchio con costante di tempo TAU,
+    // indipendente da quanti eventi al secondo manda il sensore
+    const now = performance.now();
+    const dt = this._t ? Math.min(1, (now - this._t) / 1000) : 1;
+    this._t = now;
+    const TAU = 0.6;  // secondi: più alto = più stabile ma più lento
+    const k = 1 - Math.exp(-dt / TAU);
+    this._vx += (Math.sin(toRad(mag)) - this._vx) * k;
+    this._vy += (Math.cos(toRad(mag)) - this._vy) * k;
     this.magnetic = norm360((Math.atan2(this._vx, this._vy) * 180) / Math.PI);
     this.heading = S.north === "T" ? norm360(this.magnetic + Number(S.decl || 0)) : this.magnetic;
-    this.listeners.forEach((fn) => fn(this));
+    // aggiornamento della grafica al massimo una volta per fotogramma
+    if (!this._raf) this._raf = requestAnimationFrame(() => { this._raf = 0; this.listeners.forEach((fn) => fn(this)); });
   },
 
   status() {
@@ -155,19 +162,80 @@ function updateCompassUI(c) {
   $("#compassInfo").textContent = st.msg;
   $("#compassInfo").className = st.bad ? "warn" : "muted";
   if (c.heading === null) return;
-  const h = Math.round(c.heading);
+  // rotazione "srotolata" (niente giro completo passando da 359° a 0°)
+  if (updateCompassUI.rot === undefined) updateCompassUI.rot = -c.heading;
+  let d = norm360(-c.heading - updateCompassUI.rot + 180) - 180;
+  updateCompassUI.rot += d;
+  $("#roseSvg").style.transform = `rotate(${updateCompassUI.rot}deg)`;
+  // numero mostrato: cambia solo se la differenza supera 1,5° (isteresi)
+  const prev = updateCompassUI.shown;
+  if (prev === undefined || Math.abs(norm360(c.heading - prev + 180) - 180) >= 1.5) updateCompassUI.shown = c.heading;
+  const h = Math.round(norm360(updateCompassUI.shown)) % 360;
   $("#degBig").textContent = `${h}° ${cardinal(h)}`;
-  $("#roseSvg").style.transform = `rotate(${-c.heading}deg)`;
   $("#camHeading").textContent = `${h}° ${cardinal(h)}${st.bad ? " ⚠" : ""}`;
   $("#camArrow").innerHTML = arrowSvg(-c.heading);
+  MapView.heading(c.heading);
 }
+
+
+/* -------------------------------------------------------------- Mappa */
+// Leaflet + OpenStreetMap: gratuito, senza chiave. Pallino blu = posizione, cono = direzione della bussola,
+// pallini verdi = rilievi salvati.
+const MapView = {
+  map: null, me: null, acc: null, follow: true, layer: null, centered: false,
+  init() {
+    if (!window.L || this.map) return;
+    this.map = L.map("map", { zoomControl: false, attributionControl: true }).setView([41.9, 12.5], 6);
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19, attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    }).addTo(this.map);
+    this.layer = L.layerGroup().addTo(this.map);
+    this.map.on("dragstart", () => { this.follow = false; $("#btnCenter").classList.remove("follow"); });
+    $("#btnCenter").classList.add("follow");
+    $("#btnCenter").addEventListener("click", () => {
+      this.follow = true; $("#btnCenter").classList.add("follow");
+      const f = GPS.last;
+      if (f) this.map.setView([f.lat, f.lon], Math.max(this.map.getZoom(), 18));
+    });
+    this.plot();
+  },
+  icon() {
+    return L.divIcon({ className: "", iconSize: [60, 60], iconAnchor: [30, 30],
+      html: '<div class="me-wrap"><div class="me-cone" id="meCone"></div><div class="me-dot"></div></div>' });
+  },
+  update(f) {
+    if (!this.map) return;
+    const ll = [f.lat, f.lon];
+    if (!this.me) {
+      this.acc = L.circle(ll, { radius: f.acc, color: "#1a73e8", weight: 1, fillColor: "#1a73e8", fillOpacity: 0.12, interactive: false }).addTo(this.map);
+      this.me = L.marker(ll, { icon: this.icon(), interactive: false, keyboard: false }).addTo(this.map);
+    } else { this.me.setLatLng(ll); this.acc.setLatLng(ll).setRadius(f.acc); }
+    if (!this.centered) { this.map.setView(ll, 18); this.centered = true; }
+    else if (this.follow) this.map.panTo(ll, { animate: true });
+    const q = f.acc <= 5 ? "ok" : f.acc <= 15 ? "" : "warn";
+    $("#mapInfo").innerHTML = `${f.lat.toFixed(6)}, ${f.lon.toFixed(6)} · <span class="${q}">±${Math.round(f.acc)} m</span>`;
+  },
+  heading(h) {
+    const c = document.getElementById("meCone");
+    if (c) { c.style.display = "block"; c.style.transform = `rotate(${updateCompassUI.rot !== undefined ? -updateCompassUI.rot : h}deg)`; }
+  },
+  async plot() {
+    if (!this.map) return;
+    this.layer.clearLayers();
+    (await DB.all()).filter((r) => r.posizione && r.posizione.lat).forEach((r) => {
+      L.circleMarker([r.posizione.lat, r.posizione.lon], { radius: 7, color: "#fff", weight: 2, fillColor: "#2e7d32", fillOpacity: 1 })
+        .bindTooltip(`${idLabel(r)} · ${r.specie || ""}`, { direction: "top" })
+        .on("click", () => openDetail(r.id)).addTo(this.layer);
+    });
+  },
+  refresh() { if (this.map) { setTimeout(() => this.map.invalidateSize(), 50); this.plot(); } },
+};
 
 /* --------------------------------------------------------------- GPS */
 const GPS = {
   watch: null, last: null, best: null, fixed: null,
   start() {
     if (this.watch !== null || !navigator.geolocation) return;
-    this.best = null;
     this.watch = navigator.geolocation.watchPosition(
       (p) => {
         const fix = { lat: p.coords.latitude, lon: p.coords.longitude, acc: p.coords.accuracy, alt: p.coords.altitude, time: p.timestamp };
@@ -175,6 +243,7 @@ const GPS = {
         // la lettura migliore degli ultimi 60 s
         if (!this.best || fix.acc <= this.best.acc || fix.time - this.best.time > 60000) this.best = fix;
         updateGpsUI();
+        MapView.update(fix);
       },
       (err) => { $("#gpsInfo").textContent = "GPS non disponibile: " + err.message; },
       { enableHighAccuracy: true, maximumAge: 0, timeout: 30000 }
@@ -315,12 +384,17 @@ async function openForm() {
   setSeg("segValutazione", draft.tipoValutazione);
   applyCantiere(); applyValutazione();
   await suggestProgressivo();
-  GPS.fixed = null; GPS.start();
+  GPS.fixed = null; GPS.best = null; GPS.start();
   $("#gpsInfo").textContent = "In attesa del GPS…";
   $("#lnkMaps").classList.add("hidden");
   $("#formErr").textContent = ""; $("#dupWarn").classList.add("hidden");
   renderThumbs();
   await fillLavori();
+  const tpl = await DB.getKV("areteTemplate");
+  $("#fAreteOn").checked = !!S.areteOn;
+  $("#areteMissing").classList.toggle("hidden", !!tpl);
+  $("#areteBox").classList.toggle("hidden", !(S.areteOn && tpl));
+  if (window.ARETE_READY) ARETE.reset($("#areteBox"), (await DB.getKV("areteRemember")) || {});
   show("form");
 }
 function applyCantiere() {
@@ -394,11 +468,19 @@ async function saveForm() {
     p.name = `foto_${n}.jpg`;
     p.nameN = p.arrow ? `foto_${n}_N.jpg` : null;
   });
+  r.arete = null; r.areteXlsx = null;
+  const tpl = await DB.getKV("areteTemplate");
+  if ($("#fAreteOn").checked && tpl && window.ARETE_READY) {
+    r.arete = ARETE.collect($("#areteBox"));
+    try { r.areteXlsx = await ARETE.makeXlsx(tpl.blob, r); }
+    catch (e) { $("#formErr").textContent = "Errore nella scheda ARETÉ: " + e.message; return; }
+    if (r.arete.ubicaz) await DB.setKV("areteRemember", { ubicaz: r.arete.ubicaz });
+  }
   r.status = "pending";
   await DB.put(r);
   await DB.setKV("lastLavoro", { lavoro: r.lavoro, tipoCantiere: r.tipoCantiere, tipoValutazione: r.tipoValutazione });
-  GPS.stop();
   draft = null;
+  GPS.fixed = null;
   toast("Rilievo salvato sul telefono");
   show("home");
   refreshCounts();
@@ -429,18 +511,19 @@ function datiJson(r) {
       nordRiferimento: p.ref === "T" ? "geografico" : "magnetico", bussolaDaCalibrare: !!p.compassBad,
       lat: p.lat ?? null, lon: p.lon ?? null, ora: new Date(p.time).toISOString() })),
     allegati: r.allegati.map((a) => a.name),
+    schedaARETE: r.arete ? { file: r.areteXlsx ? `scheda_ARETE_${safe(idLabel(r))}.xlsx` : null, dati: r.arete } : null,
   };
 }
 const num = (s) => (s === "" || s === undefined ? null : Number(String(s).replace(",", ".")));
-const CSV_HEAD = ["Cartella", "Data", "Operatore", "Tipo", "N. gs", "N. cart", "N. progressivo", "Tipo valutazione", "Specie",
+const CSV_HEAD = ["Cartella", "Data", "Operatore", "Zona / cliente", "Tipo", "N. gs", "N. cart", "N. progressivo", "Tipo valutazione", "Specie",
   "Diametro 120 cm (cm)", "Altezza (m)", "Lat", "Lon", "Precisione GPS (m)", "Problematiche", "Note", "Interventi e nuova CPC",
-  "Strumento", "N. foto", "Link Maps"];
+  "Strumento", "N. foto", "Scheda ARETÉ", "Link Maps"];
 function csvRow(r) {
   const p = r.posizione || {};
-  const vals = [r.cartella, new Date(r.createdAt).toLocaleString("it-IT"), r.operatore, r.tipoCantiere, r.ngs, r.ncart,
+  const vals = [r.cartella, new Date(r.createdAt).toLocaleString("it-IT"), r.operatore, r.lavoro, r.tipoCantiere, r.ngs, r.ncart,
     r.tipoCantiere === "Privato" ? r.nprog : "", r.tipoValutazione, r.specie, r.diametro120, r.altezza,
     p.lat ? p.lat.toFixed(6).replace(".", ",") : "", p.lon ? p.lon.toFixed(6).replace(".", ",") : "", p.acc ? Math.round(p.acc) : "",
-    r.problematiche, r.note, r.interventi, r.strumento, r.foto.length,
+    r.problematiche, r.note, r.interventi, r.strumento, r.foto.length, r.areteXlsx ? "sì" : "",
     p.lat ? `https://www.google.com/maps/search/?api=1&query=${p.lat},${p.lon}` : ""];
   return vals.map((x) => `"${String(x ?? "").replace(/"/g, '""').replace(/\r?\n/g, " ")}"`).join(";");
 }
@@ -451,109 +534,243 @@ function filesOf(r) {
     if (p.arrow) files.push({ name: p.nameN, blob: p.arrow });
   });
   r.allegati.forEach((a) => files.push({ name: "allegato_" + safe(a.name), blob: a.blob }));
+  if (r.areteXlsx) files.push({ name: `scheda_ARETE_${safe(idLabel(r))}.xlsx`, blob: r.areteXlsx });
   return files;
 }
 
 /* ------------------------------------------------- OneDrive (Graph) */
+const msClientId = () => S.msClientId || CFG.clientId || "";
 const Auth = {
   msal: null, account: null,
-  configured() { return !!(CFG.clientId && window.msal); },
+  configured() { return !!(msClientId() && window.msal); },
   async init() {
     if (!this.configured()) return;
     this.msal = new msal.PublicClientApplication({
-      auth: { clientId: CFG.clientId, authority: CFG.authority, redirectUri: location.origin + location.pathname },
+      auth: { clientId: msClientId(), authority: CFG.authority, redirectUri: location.origin + location.pathname },
       cache: { cacheLocation: "localStorage" },
     });
     await this.msal.initialize();
     try {
       const res = await this.msal.handleRedirectPromise();
       if (res && res.account) this.msal.setActiveAccount(res.account);
-    } catch (e) { toast("Accesso non riuscito: " + e.message, 5000); }
+    } catch (e) { toast("Accesso Microsoft non riuscito: " + e.message, 6000); }
     this.account = this.msal.getActiveAccount() || this.msal.getAllAccounts()[0] || null;
     if (this.account) this.msal.setActiveAccount(this.account);
   },
   async login() {
-    if (!this.configured()) { toast("Manca il clientId in config.js (vedi istruzioni)", 5000); return; }
+    if (!this.configured()) { toast("Manca il codice dell'app Microsoft", 5000); return; }
+    if (!this.msal) await this.init();
     await this.msal.loginRedirect({ scopes: CFG.scopes, prompt: "select_account" });
   },
   async logout() { if (this.msal) await this.msal.logoutRedirect({ account: this.account }); },
-  async token() {
+  connected() { return !!this.account; },
+  label() { return this.account ? this.account.username : ""; },
+  async token(interactive) {
     if (!this.account) throw new Error("OneDrive non collegato");
     try {
-      const r = await this.msal.acquireTokenSilent({ scopes: CFG.scopes, account: this.account });
-      return r.accessToken;
+      return (await this.msal.acquireTokenSilent({ scopes: CFG.scopes, account: this.account })).accessToken;
     } catch (e) {
-      if (e instanceof msal.InteractionRequiredAuthError) { await this.msal.acquireTokenRedirect({ scopes: CFG.scopes }); }
-      throw e;
+      if (interactive && e instanceof msal.InteractionRequiredAuthError) await this.msal.acquireTokenRedirect({ scopes: CFG.scopes });
+      throw new Error("Accesso Microsoft scaduto: tocca Sincronizza ora");
     }
   },
 };
 
 const G = "https://graph.microsoft.com/v1.0";
 const enc = (path) => path.split("/").map(encodeURIComponent).join("/");
-async function gfetch(url, opt = {}) {
-  const t = await Auth.token();
-  const r = await fetch(url, { ...opt, headers: { Authorization: "Bearer " + t, ...(opt.headers || {}) } });
-  if (r.status === 429 || r.status >= 500) { await new Promise((s) => setTimeout(s, 2000)); return fetch(url, { ...opt, headers: { Authorization: "Bearer " + t, ...(opt.headers || {}) } }); }
-  return r;
-}
-async function uploadFile(path, blob) {
-  if (blob.size < 4 * 1024 * 1024) {
-    const r = await gfetch(`${G}/me/drive/root:/${enc(path)}:/content`, { method: "PUT", body: blob });
-    if (!r.ok) throw new Error(`Upload ${path}: ${r.status}`);
-    return;
-  }
-  const s = await gfetch(`${G}/me/drive/root:/${enc(path)}:/createUploadSession`, {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ item: { "@microsoft.graph.conflictBehavior": "replace" } }),
-  });
-  if (!s.ok) throw new Error(`Sessione upload ${path}: ${s.status}`);
-  const { uploadUrl } = await s.json();
-  const CH = 10 * 327680;
-  for (let i = 0; i < blob.size; i += CH) {
-    const part = blob.slice(i, Math.min(i + CH, blob.size));
-    const r = await fetch(uploadUrl, { method: "PUT", body: part,
-      headers: { "Content-Range": `bytes ${i}-${i + part.size - 1}/${blob.size}` } });
-    if (!r.ok && r.status !== 202) throw new Error(`Upload ${path}: ${r.status}`);
-  }
-}
-async function updateRegistro(base, rows) {
+const OneDrive = {
+  name: "OneDrive",
+  async fetch(url, opt = {}, interactive) {
+    const t = await Auth.token(interactive);
+    const go = () => fetch(url, { ...opt, headers: { Authorization: "Bearer " + t, ...(opt.headers || {}) } });
+    let r = await go();
+    if (r.status === 429 || r.status >= 500) { await new Promise((ok) => setTimeout(ok, 2000)); r = await go(); }
+    return r;
+  },
+  async upload(path, blob, interactive) {
+    if (blob.size < 4 * 1024 * 1024) {
+      const r = await this.fetch(`${G}/me/drive/root:/${enc(path)}:/content`, { method: "PUT", body: blob }, interactive);
+      if (!r.ok) throw new Error(`Upload ${path}: ${r.status}`);
+      return;
+    }
+    const s = await this.fetch(`${G}/me/drive/root:/${enc(path)}:/createUploadSession`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ item: { "@microsoft.graph.conflictBehavior": "replace" } }),
+    }, interactive);
+    if (!s.ok) throw new Error(`Sessione upload ${path}: ${s.status}`);
+    const { uploadUrl } = await s.json();
+    const CH = 10 * 327680;
+    for (let i = 0; i < blob.size; i += CH) {
+      const part = blob.slice(i, Math.min(i + CH, blob.size));
+      const r = await fetch(uploadUrl, { method: "PUT", body: part, headers: { "Content-Range": `bytes ${i}-${i + part.size - 1}/${blob.size}` } });
+      if (!r.ok && r.status !== 202) throw new Error(`Upload ${path}: ${r.status}`);
+    }
+  },
+  async readText(path, interactive) {
+    const r = await this.fetch(`${G}/me/drive/root:/${enc(path)}:/content`, {}, interactive);
+    if (r.status === 404) return null;
+    if (!r.ok) throw new Error("Lettura " + path + ": " + r.status);
+    return r.text();
+  },
+};
+
+/* --------------------------------------------- Google Drive (OAuth) */
+const gClientId = () => S.gClientId || CFG.googleClientId || "";
+const GOOGLE_SCOPE = "https://www.googleapis.com/auth/drive.file openid email";
+const GAuth = {
+  tok: null,  // { access, exp, email }
+  configured() { return !!gClientId(); },
+  load() { try { this.tok = JSON.parse(localStorage.getItem("gtoken") || "null"); } catch (e) { this.tok = null; } },
+  save() { localStorage.setItem("gtoken", JSON.stringify(this.tok)); },
+  // ritorno dalla pagina di accesso Google: il token arriva nell'indirizzo (#access_token=…)
+  async handleRedirect() {
+    if (!location.hash.includes("access_token") || !location.hash.includes("state=gdrive")) {
+      if (location.hash.includes("state=gdrive") && location.hash.includes("error")) {
+        history.replaceState(null, "", location.pathname);
+        toast("Accesso Google non completato", 5000);
+      }
+      return false;
+    }
+    const p = new URLSearchParams(location.hash.slice(1));
+    history.replaceState(null, "", location.pathname);
+    this.tok = { access: p.get("access_token"), exp: Date.now() + (Number(p.get("expires_in")) - 60) * 1000, email: (this.tok && this.tok.email) || "" };
+    try {
+      const r = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", { headers: { Authorization: "Bearer " + this.tok.access } });
+      if (r.ok) this.tok.email = (await r.json()).email || this.tok.email;
+    } catch (e) { /* offline */ }
+    this.save();
+    return true;
+  },
+  login(silent) {
+    if (!this.configured()) { toast("Manca il codice dell'app Google", 5000); return; }
+    const q = new URLSearchParams({
+      client_id: gClientId(), redirect_uri: location.origin + location.pathname, response_type: "token",
+      scope: GOOGLE_SCOPE, include_granted_scopes: "true", state: "gdrive",
+      prompt: silent ? "none" : "select_account",
+    });
+    if (this.tok && this.tok.email) q.set("login_hint", this.tok.email);
+    location.href = "https://accounts.google.com/o/oauth2/v2/auth?" + q.toString();
+  },
+  logout() { this.tok = null; localStorage.removeItem("gtoken"); },
+  connected() { return !!(this.tok && this.tok.access); },
+  label() { return this.tok ? this.tok.email || "account Google" : ""; },
+  token(interactive) {
+    if (!this.tok) throw new Error("Google Drive non collegato");
+    if (Date.now() < this.tok.exp) return this.tok.access;
+    if (interactive) { this.login(true); throw new Error("Rinnovo accesso Google…"); }
+    throw new Error("Accesso Google scaduto: tocca Sincronizza ora");
+  },
+};
+const GD = "https://www.googleapis.com/drive/v3";
+const GDU = "https://www.googleapis.com/upload/drive/v3";
+const GoogleDrive = {
+  name: "Google Drive",
+  folders: {},
+  async fetch(url, opt = {}, interactive) {
+    const t = GAuth.token(interactive);
+    const r = await fetch(url, { ...opt, headers: { Authorization: "Bearer " + t, ...(opt.headers || {}) } });
+    if (r.status === 401) { GAuth.tok.exp = 0; GAuth.save(); throw new Error("Accesso Google scaduto: tocca Sincronizza ora"); }
+    return r;
+  },
+  q: (s) => s.replace(/\\/g, "\\\\").replace(/'/g, "\\'"),
+  async find(name, parent, folder, interactive) {
+    const q = `name='${this.q(name)}' and '${parent}' in parents and trashed=false` +
+      (folder ? " and mimeType='application/vnd.google-apps.folder'" : "");
+    const r = await this.fetch(`${GD}/files?q=${encodeURIComponent(q)}&fields=files(id,name)&spaces=drive`, {}, interactive);
+    if (!r.ok) throw new Error("Ricerca su Drive: " + r.status);
+    const j = await r.json();
+    return j.files && j.files[0] ? j.files[0].id : null;
+  },
+  async folder(parts, interactive) {
+    let parent = "root", key = "";
+    for (const name of parts) {
+      key += "/" + name;
+      if (!this.folders[key]) {
+        let id = await this.find(name, parent, true, interactive);
+        if (!id) {
+          const r = await this.fetch(`${GD}/files?fields=id`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name, mimeType: "application/vnd.google-apps.folder", parents: [parent] }),
+          }, interactive);
+          if (!r.ok) throw new Error("Creazione cartella " + name + ": " + r.status);
+          id = (await r.json()).id;
+        }
+        this.folders[key] = id;
+      }
+      parent = this.folders[key];
+    }
+    return parent;
+  },
+  split(path) { const p = path.split("/"); return { dirs: p.slice(0, -1), name: p[p.length - 1] }; },
+  async upload(path, blob, interactive) {
+    const { dirs, name } = this.split(path);
+    const parent = await this.folder(dirs, interactive);
+    const existing = await this.find(name, parent, false, interactive);
+    const meta = existing ? {} : { name, parents: [parent] };
+    const url = existing ? `${GDU}/files/${existing}?uploadType=resumable` : `${GDU}/files?uploadType=resumable`;
+    const s = await this.fetch(url, {
+      method: existing ? "PATCH" : "POST",
+      headers: { "Content-Type": "application/json; charset=UTF-8", "X-Upload-Content-Type": blob.type || "application/octet-stream" },
+      body: JSON.stringify(meta),
+    }, interactive);
+    if (!s.ok) throw new Error(`Upload ${name}: ${s.status}`);
+    const loc = s.headers.get("Location");
+    const r = await fetch(loc, { method: "PUT", body: blob });
+    if (!r.ok) throw new Error(`Upload ${name}: ${r.status}`);
+  },
+  async readText(path, interactive) {
+    const { dirs, name } = this.split(path);
+    const parent = await this.folder(dirs, interactive);
+    const id = await this.find(name, parent, false, interactive);
+    if (!id) return null;
+    const r = await this.fetch(`${GD}/files/${id}?alt=media`, {}, interactive);
+    if (!r.ok) throw new Error("Lettura " + name + ": " + r.status);
+    return r.text();
+  },
+};
+
+const provider = () => (S.provider === "google" ? GoogleDrive : S.provider === "onedrive" ? OneDrive : null);
+const providerAuth = () => (S.provider === "google" ? GAuth : S.provider === "onedrive" ? Auth : null);
+
+async function updateRegistro(P, base, rows, interactive) {
   const path = `${base}/registro.csv`;
-  let text = "﻿" + CSV_HEAD.map((h) => `"${h}"`).join(";") + "\r\n";
-  const r = await gfetch(`${G}/me/drive/root:/${enc(path)}:/content`);
-  if (r.ok) text = await r.text();
-  else if (r.status !== 404) throw new Error("Lettura registro: " + r.status);
+  let text = await P.readText(path, interactive);
+  if (text === null) text = "﻿" + CSV_HEAD.map((h) => `"${h}"`).join(";") + "\r\n";
   if (!text.endsWith("\n")) text += "\r\n";
   rows.forEach((row) => { const key = row.split(";")[0]; if (!text.includes(key)) text += row + "\r\n"; });
-  await uploadFile(path, new Blob([text], { type: "text/csv;charset=utf-8" }));
+  await P.upload(path, new Blob([text], { type: "text/csv;charset=utf-8" }), interactive);
 }
 
 const Sync = {
   running: false,
   async run(manual = false) {
     if (this.running) return;
+    const P = provider(), A = providerAuth();
+    if (!P || !A.connected()) { setSyncInfo("Archivio non collegato (Impostazioni)"); if (manual) toast("Collega OneDrive o Google Drive nelle Impostazioni"); return; }
     if (!navigator.onLine) { if (manual) toast("Nessuna connessione: i rilievi restano sul telefono"); return; }
-    if (!Auth.account) { if (manual) toast("Collega OneDrive nelle Impostazioni"); setSyncInfo("OneDrive non collegato"); return; }
     const pending = (await DB.all()).filter((r) => r.status !== "synced");
-    if (!pending.length) { if (manual) toast("Tutto sincronizzato"); setSyncInfo("Tutto sincronizzato"); return; }
+    if (!pending.length) { if (manual) toast("Tutto sincronizzato"); setSyncInfo(`Tutto sincronizzato su ${P.name}`); return; }
     this.running = true;
-    let ok = 0;
+    let ok = 0, lastErr = "";
     for (const r of pending) {
       try {
-        setSyncInfo(`Invio ${r.cartella}…`);
+        setSyncInfo(`Invio ${r.cartella} su ${P.name}…`);
         const base = `${safe(S.folder || "Rilievi")}/${safe(r.lavoro)}`;
-        for (const f of filesOf(r)) await uploadFile(`${base}/${r.cartella}/${f.name}`, f.blob);
-        await updateRegistro(base, [csvRow(r)]);
-        r.status = "synced"; r.syncedAt = Date.now(); r.error = null;
+        for (const f of filesOf(r)) await P.upload(`${base}/${r.cartella}/${f.name}`, f.blob, manual);
+        await updateRegistro(P, base, [csvRow(r)], manual);
+        r.status = "synced"; r.syncedAt = Date.now(); r.error = null; r.archivio = P.name;
         ok++;
       } catch (e) {
-        r.status = "error"; r.error = String(e.message || e);
+        r.status = "error"; r.error = lastErr = String(e.message || e);
+        await DB.put(r);
+        if (/scadut|Rinnovo|non collegato/.test(lastErr)) break;
+        continue;
       }
       await DB.put(r);
     }
     this.running = false;
     const left = (await DB.all()).filter((r) => r.status !== "synced").length;
-    setSyncInfo(left ? `${ok} inviati, ${left} da reinviare` : `Sincronizzato alle ${new Date().toLocaleTimeString("it-IT")}`);
+    setSyncInfo(left ? `${ok} inviati, ${left} da reinviare${lastErr ? " · " + lastErr : ""}` : `Sincronizzato su ${P.name} alle ${new Date().toLocaleTimeString("it-IT")}`);
     refreshCounts();
   },
 };
@@ -616,19 +833,24 @@ async function deleteCurrent() {
 function show(id) {
   $$(".screen").forEach((s) => s.classList.toggle("active", s.id === id));
   $$("nav.tabs button").forEach((b) => b.classList.toggle("on", b.dataset.go === id));
-  $("nav.tabs").classList.toggle("hidden", id === "camera");
+  $("nav.tabs").classList.toggle("hidden", id === "camera" || id === "welcome");
   if (id === "list") renderList();
+  if (id === "home") MapView.refresh();
   if (id === "settings") renderSettings();
   window.scrollTo(0, 0);
 }
-function renderSettings() {
+async function renderSettings() {
   $("#sFolder").value = S.folder; $("#sName").value = S.name; $("#sInit").value = S.init; $("#sDecl").value = S.decl;
-  setSeg("segNorth", S.north); setSeg("segQuality", S.quality);
-  const a = Auth.account;
-  $("#acctInfo").textContent = !Auth.configured() ? "App non ancora registrata su Microsoft (manca clientId)" :
-    a ? `Collegato: ${a.username}` : "Non collegato";
-  $("#btnLogin").classList.toggle("hidden", !!a);
-  $("#btnLogout").classList.toggle("hidden", !a);
+  setSeg("segNorth", S.north); setSeg("segQuality", S.quality); setSeg("segProv", S.provider);
+  const A = providerAuth();
+  $("#acctInfo").textContent = !A ? "Scegli dove salvare i rilievi" :
+    !A.configured() ? "Manca il codice dell'app: riapri la configurazione iniziale" :
+    A.connected() ? `${provider().name} collegato: ${A.label()}` : `${provider().name} non collegato`;
+  $("#btnLogin").textContent = A && !A.configured() ? "Configura" : "Collega";
+  $("#btnLogin").classList.toggle("hidden", !A || A.connected());
+  $("#btnLogout").classList.toggle("hidden", !A || !A.connected());
+  const tpl = await DB.getKV("areteTemplate");
+  $("#areteTplInfo").textContent = tpl ? `Caricato: ${tpl.name} (${new Date(tpl.date).toLocaleDateString("it-IT")})` : "Nessun modello caricato";
   $("#verInfo").textContent = "Versione " + (CFG.appVersion || "");
 }
 function setNet() {
@@ -638,16 +860,32 @@ function setNet() {
 }
 
 /* --------------------------------------------------------------- Avvio */
+function wizardCode() {
+  const A = providerAuth();
+  $("#wCodeBox").classList.toggle("hidden", !A || A.configured());
+}
+function openWizard() {
+  $("#wName").value = S.name; $("#wInit").value = S.init;
+  setSeg("wProv", S.provider); wizardCode();
+  show("welcome");
+}
+
 async function main() {
   await DB.open();
   await loadSettings();
+  GAuth.load();
+  const gBack = await GAuth.handleRedirect();
+  if (gBack) S.provider = "google";
   drawRose();
   $("#camArrow").innerHTML = arrowSvg(0);
   Compass.onChange(updateCompassUI);
   setNet();
   window.addEventListener("online", () => { setNet(); Sync.run(); });
   window.addEventListener("offline", setNet);
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) Sync.run(); });
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) GPS.stop();          // risparmio batteria quando l'app è in secondo piano
+    else { GPS.start(); Sync.run(); }
+  });
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 
   // specie (elenco del Protocollo ARETÉ)
@@ -662,7 +900,7 @@ async function main() {
   $("#btnNew").addEventListener("click", async () => { Compass.start().then(() => $("#btnCompass").classList.add("hidden")); openForm(); });
   $("#btnFormBack").addEventListener("click", () => {
     if (draft && draft.foto.length && !confirm("Annullare il rilievo? Le foto scattate andranno perse.")) return;
-    GPS.stop(); draft = null; show("home");
+    draft = null; GPS.fixed = null; show("home");
   });
   bindSeg("segCantiere", (v) => { draft.tipoCantiere = v; applyCantiere(); checkDuplicate(); });
   bindSeg("segValutazione", (v) => { draft.tipoValutazione = v; applyValutazione(); });
@@ -736,11 +974,67 @@ async function main() {
   bindS("sDecl", "decl", (x) => Number(String(x).replace(",", ".")) || 0);
   bindSeg("segNorth", (v) => { S.north = v; saveSettings(); });
   bindSeg("segQuality", (v) => { S.quality = Number(v); saveSettings(); });
-  $("#btnLogin").addEventListener("click", () => Auth.login());
-  $("#btnLogout").addEventListener("click", () => Auth.logout());
+  bindSeg("segProv", (v) => { S.provider = v; saveSettings(); renderSettings(); });
+  $("#btnLogin").addEventListener("click", () => {
+    const A = providerAuth();
+    if (!A) return;
+    if (!A.configured()) { openWizard(); return; }
+    A.login();
+  });
+  $("#btnLogout").addEventListener("click", async () => {
+    const A = providerAuth();
+    if (A === GAuth) { GAuth.logout(); renderSettings(); } else if (A) await A.logout();
+  });
+  $("#sAreteTpl").addEventListener("change", async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    try {
+      await ARETE.checkTemplate(f);
+      await DB.setKV("areteTemplate", { blob: f, name: f.name, date: Date.now() });
+      toast("Modello ARETÉ caricato");
+    } catch (err) { toast(err.message, 6000); }
+    e.target.value = "";
+    renderSettings();
+  });
+  $("#fAreteOn").addEventListener("change", async (e) => {
+    S.areteOn = e.target.checked; saveSettings();
+    const tpl = await DB.getKV("areteTemplate");
+    $("#areteMissing").classList.toggle("hidden", !!tpl || !S.areteOn);
+    $("#areteBox").classList.toggle("hidden", !(S.areteOn && tpl));
+  });
+
+  // configurazione iniziale
+  bindSeg("wProv", (v) => { S.provider = v; saveSettings(); wizardCode(); });
+  $("#wName").addEventListener("change", (e) => { S.name = e.target.value.trim(); saveSettings(); });
+  $("#wInit").addEventListener("change", (e) => { S.init = e.target.value.trim().toUpperCase(); saveSettings(); });
+  $("#wConnect").addEventListener("click", async () => {
+    S.name = $("#wName").value.trim(); S.init = $("#wInit").value.trim().toUpperCase();
+    if (!S.name || !S.init) { $("#wErr").textContent = "Scrivi nome e iniziali"; return; }
+    if (!S.provider) { $("#wErr").textContent = "Scegli OneDrive o Google Drive"; return; }
+    const code = $("#wCode").value.trim();
+    if (code) { if (S.provider === "google") S.gClientId = code; else S.msClientId = code; }
+    await saveSettings();
+    const A = providerAuth();
+    if (!A.configured()) { $("#wErr").textContent = "Inserisci il codice dell'app"; return; }
+    if (A === Auth && !Auth.msal) await Auth.init();
+    A.login();
+  });
+  $("#wSkip").addEventListener("click", async () => {
+    S.name = $("#wName").value.trim() || S.name; S.init = $("#wInit").value.trim().toUpperCase() || S.init;
+    S.setupDone = true; await saveSettings(); show("home");
+  });
 
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
   await Auth.init().catch((e) => console.warn(e));
+  MapView.init();
+  GPS.start();
+  ARETE.init().then(() => { ARETE.build($("#areteBox")); window.ARETE_READY = true; }).catch((e) => console.warn("ARETÉ", e));
+  const A = providerAuth();
+  if (A && A.connected() && !S.setupDone) {
+    S.setupDone = true; toast(`${provider().name} collegato: ${A.label()}`, 4000);
+  }
+  await saveSettings();
+  if (!S.setupDone) openWizard();
   refreshCounts();
   Sync.run();
 }

@@ -9,6 +9,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Rilievi">
 <link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="vendor/leaflet.css">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <link rel="icon" href="icons/icon-192.png">
 <title>Rilievi in campo</title>
@@ -48,8 +49,25 @@
 
   /* Bussola */
   .compass-wrap { display: flex; flex-direction: column; align-items: center; }
-  .rose { width: 220px; height: 220px; position: relative; }
-  .rose svg { width: 100%; height: 100%; transition: transform .12s linear; }
+  .rose { width: 220px; height: 220px; position: relative; flex: 0 0 auto; }
+  .rose svg { width: 100%; height: 100%; }
+  .compass-mini { display: flex; align-items: center; gap: 16px; }
+  .compass-mini .rose { width: 112px; height: 112px; }
+  .compass-mini .needle-fixed { top: -4px; border-left-width: 7px; border-right-width: 7px; border-top-width: 12px; }
+  .compass-mini .deg { font-size: 34px; margin-top: 0; }
+  .cm-text { flex: 1; min-width: 0; }
+  .mapcard { position: relative; padding: 0; overflow: hidden; }
+  #map { height: 250px; width: 100%; background: #e6ebe7; }
+  .mapinfo { padding: 8px 12px; }
+  .mapbtn { position: absolute; top: 10px; right: 10px; z-index: 500; width: 44px; height: 44px; border-radius: 12px; border: 0;
+    background: #fff; color: var(--verde); font-size: 24px; font-weight: 800; box-shadow: 0 1px 4px rgba(0,0,0,.3); }
+  .me-wrap { position: relative; width: 60px; height: 60px; }
+  .me-dot { position: absolute; left: 21px; top: 21px; width: 18px; height: 18px; border-radius: 50%; background: #1a73e8;
+    border: 3px solid #fff; box-shadow: 0 0 4px rgba(0,0,0,.4); }
+  .me-cone { display: none; position: absolute; inset: 0; transform-origin: 50% 50%;
+    background: conic-gradient(from -30deg at 50% 50%, rgba(26,115,232,.45) 0deg, rgba(26,115,232,0) 60deg, transparent 60deg);
+    -webkit-mask: radial-gradient(circle, #000 0 30px, transparent 30px); mask: radial-gradient(circle, #000 0 30px, transparent 30px); border-radius: 50%; }
+  .mapbtn.follow { background: var(--verde); color: #fff; }
   .needle-fixed { position: absolute; left: 50%; top: -6px; transform: translateX(-50%); width: 0; height: 0;
     border-left: 10px solid transparent; border-right: 10px solid transparent; border-top: 18px solid var(--rosso); }
   .deg { font-size: 44px; font-weight: 800; margin-top: 6px; font-variant-numeric: tabular-nums; }
@@ -98,20 +116,67 @@
   .toast { position: fixed; left: 16px; right: 16px; bottom: calc(86px + var(--safe-bot)); background: #222; color: #fff; padding: 12px 14px;
     border-radius: 12px; z-index: 20; opacity: 0; transition: opacity .25s; pointer-events: none; }
   .toast.show { opacity: .95; }
+  details { border-top: 1px solid #eee; padding: 8px 0; }
+  details summary { font-weight: 800; color: var(--verde); font-size: 16px; padding: 6px 0; cursor: pointer; }
+  .sub { font-weight: 700; margin: 14px 0 2px; color: var(--testo); }
+  .defrow { display: flex; gap: 6px; margin-top: 6px; }
+  .defrow .dd { flex: 1; }
+  .defrow .dg { flex: 0 0 76px; }
+  .defrow .del2 { flex: 0 0 40px; border: 0; border-radius: 10px; background: #eee; font-weight: 800; }
+  .zone:empty + .addrow { margin-top: 4px; }
+  .addrow, #addPresc { margin-top: 8px; }
+  label.chk { display: flex; align-items: center; gap: 10px; color: var(--testo); font-size: 16px; }
+  label.chk input { width: 22px; height: 22px; }
+  .steps { counter-reset: st; }
+  .step { position: relative; padding-left: 44px; margin-bottom: 18px; }
+  .step::before { counter-increment: st; content: counter(st); position: absolute; left: 0; top: 0; width: 32px; height: 32px; border-radius: 50%;
+    background: var(--verde); color: #fff; font-weight: 800; display: flex; align-items: center; justify-content: center; }
   .kv { display: grid; grid-template-columns: 40% 60%; gap: 6px 10px; font-size: 15px; }
   .kv div:nth-child(odd) { color: var(--grigio); }
 </style>
 </head>
 <body>
 
+<!-- PRIMO AVVIO -->
+<section id="welcome" class="screen">
+  <header class="bar"><h1>Benvenuto in Rilievi</h1></header>
+  <div class="card steps">
+    <div class="step"><b>Chi sei</b>
+      <label class="f">Nome e cognome</label><input type="text" id="wName">
+      <label class="f">Iniziali (per il nome delle cartelle)</label><input type="text" id="wInit" maxlength="4" placeholder="es. VA">
+    </div>
+    <div class="step"><b>Dove salvare i rilievi</b>
+      <div class="muted">Ognuno salva nel proprio cloud personale e, se vuole, condivide la cartella con i colleghi.</div>
+      <div class="seg" id="wProv" style="margin-top:8px"><button data-v="onedrive">OneDrive</button><button data-v="google">Google Drive</button></div>
+      <div id="wCodeBox" class="hidden">
+        <label class="f">Codice dell'app (ID client)</label>
+        <input type="text" id="wCode" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="te lo dà chi ha installato l'app">
+      </div>
+    </div>
+    <div class="step"><b>Collega il tuo account</b>
+      <div class="muted">Si apre la pagina di accesso di Microsoft o Google: entra con il tuo account e accetta i permessi.</div>
+      <button class="big" id="wConnect" style="margin-top:10px">Collega</button>
+      <div class="warn" id="wErr" style="margin-top:6px"></div>
+    </div>
+  </div>
+  <button class="big sec" id="wSkip">Salta per ora (i rilievi restano sul telefono)</button>
+</section>
+
 <!-- HOME: bussola + azioni -->
 <section id="home" class="screen active">
   <header class="bar"><h1>Rilievi in campo</h1><span id="netState" class="badge pending">offline</span></header>
-  <div class="card compass-wrap">
+  <div class="card mapcard">
+    <div id="map"></div>
+    <button class="mapbtn" id="btnCenter" title="Centra sulla mia posizione">◎</button>
+    <div class="mapinfo muted" id="mapInfo">In attesa del GPS…</div>
+  </div>
+  <div class="card compass-mini">
     <div class="rose"><div class="needle-fixed"></div><svg id="roseSvg" viewBox="-110 -110 220 220"></svg></div>
-    <div class="deg" id="degBig">—</div>
-    <div class="muted" id="compassInfo">Tocca "Attiva bussola"</div>
-    <button class="big sec" id="btnCompass" style="margin-top:10px">Attiva bussola</button>
+    <div class="cm-text">
+      <div class="deg" id="degBig">—</div>
+      <div class="muted" id="compassInfo">Tocca "Attiva bussola"</div>
+      <button class="iconbtn" id="btnCompass" style="margin-top:8px">Attiva bussola</button>
+    </div>
   </div>
   <button class="big" id="btnNew">+ Nuovo rilievo</button>
   <div class="card" style="margin-top:12px">
@@ -128,8 +193,8 @@
   <header class="bar"><button class="iconbtn" id="btnFormBack">‹ Annulla</button><h1>Nuovo rilievo</h1></header>
 
   <div class="card">
-    <label class="f">Zona / Cliente <span class="req">*</span></label>
-    <input type="text" id="fLavoro" list="lavoriList" placeholder="es. Viale dei Tigli – Comune X" autocomplete="off">
+    <label class="f">Zona / cliente <span class="req">*</span></label>
+    <input type="text" id="fLavoro" list="lavoriList" placeholder="es. Parco Rossi – Comune X" autocomplete="off">
     <datalist id="lavoriList"></datalist>
     <label class="f">Tipo</label>
     <div class="seg" id="segCantiere"><button data-v="Comune">Comune</button><button data-v="Privato">Privato</button></div>
@@ -194,6 +259,12 @@
     <div class="muted" id="allegatiInfo"></div>
   </div>
 
+  <div class="card" id="cardArete">
+    <label class="f chk"><input type="checkbox" id="fAreteOn"> Compila anche la scheda ARETÉ</label>
+    <div id="areteMissing" class="muted hidden">Per usarla carica prima il modello ARETÉ in <b>Impostazioni</b>.</div>
+    <div id="areteBox" class="hidden"></div>
+  </div>
+
   <button class="big" id="btnSave">Salva rilievo</button>
   <div class="muted warn" id="formErr" style="margin-top:8px"></div>
 </section>
@@ -237,11 +308,18 @@
 <section id="settings" class="screen">
   <header class="bar"><h1>Impostazioni</h1></header>
   <div class="card">
-    <label class="f">Account OneDrive</label>
-    <div id="acctInfo" class="muted">Non collegato</div>
-    <div class="row" style="margin-top:8px"><button class="big" id="btnLogin">Collega OneDrive</button><button class="big sec hidden" id="btnLogout">Scollega</button></div>
-    <label class="f">Cartella su OneDrive</label>
+    <label class="f">Dove salvare</label>
+    <div class="seg" id="segProv"><button data-v="onedrive">OneDrive</button><button data-v="google">Google Drive</button></div>
+    <div id="acctInfo" class="muted" style="margin-top:8px">Non collegato</div>
+    <div class="row" style="margin-top:8px"><button class="big" id="btnLogin">Collega</button><button class="big sec hidden" id="btnLogout">Scollega</button></div>
+    <label class="f">Nome della cartella</label>
     <input type="text" id="sFolder" placeholder="Rilievi">
+  </div>
+  <div class="card">
+    <label class="f">Modello scheda ARETÉ</label>
+    <div id="areteTplInfo" class="muted">Nessun modello caricato</div>
+    <div class="muted">Carica il file <b>Scheda_ARETE_ORD_telefono.xlsx</b> (puoi sceglierlo da OneDrive o Google Drive). Si carica una volta sola.</div>
+    <input type="file" id="sAreteTpl" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style="margin-top:8px">
   </div>
   <div class="card">
     <label class="f">Nome operatore</label><input type="text" id="sName">
@@ -269,6 +347,9 @@
 <script src="config.js"></script>
 <script src="vendor/msal-browser.min.js"></script>
 <script src="vendor/piexif.js"></script>
+<script src="vendor/jszip.min.js"></script>
+<script src="vendor/leaflet.js"></script>
+<script src="arete.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
