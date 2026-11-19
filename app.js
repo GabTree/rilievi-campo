@@ -375,7 +375,7 @@ async function saveForm() {
     operatore: S.name, iniziali: (S.init || "XX").toUpperCase(), appVersion: CFG.appVersion,
   });
   const err = [];
-  if (!r.lavoro) err.push("lavoro/cantiere");
+  if (!r.lavoro) err.push("zona/cliente");
   if (!r.tipoValutazione) err.push("tipo di valutazione");
   if (r.tipoCantiere === "Comune" && !r.ngs) err.push("N. gs");
   if (r.tipoCantiere === "Privato" && !r.nprog) err.push("N. progressivo");
@@ -432,7 +432,7 @@ function datiJson(r) {
   };
 }
 const num = (s) => (s === "" || s === undefined ? null : Number(String(s).replace(",", ".")));
-const CSV_HEAD = ["Cartella", "Data", "Operatore", "Tipo cantiere", "N. gs", "N. cart", "N. progressivo", "Tipo valutazione", "Specie",
+const CSV_HEAD = ["Cartella", "Data", "Operatore", "Tipo", "N. gs", "N. cart", "N. progressivo", "Tipo valutazione", "Specie",
   "Diametro 120 cm (cm)", "Altezza (m)", "Lat", "Lon", "Precisione GPS (m)", "Problematiche", "Note", "Interventi e nuova CPC",
   "Strumento", "N. foto", "Link Maps"];
 function csvRow(r) {
@@ -586,7 +586,7 @@ async function openDetail(id) {
   current = await DB.get(id);
   const r = current, p = r.posizione || {};
   $("#detTitle").textContent = `${idLabel(r)} · ${r.tipoValutazione}`;
-  const kv = [["Lavoro", r.lavoro], ["Cantiere", r.tipoCantiere], ["N. gs", r.ngs], ["N. cart", r.ncart],
+  const kv = [["Zona / cliente", r.lavoro], ["Tipo", r.tipoCantiere], ["N. gs", r.ngs], ["N. cart", r.ncart],
     ["N. progressivo", r.tipoCantiere === "Privato" ? r.nprog : ""], ["Specie", r.specie], ["Diametro 120 cm", r.diametro120 + " cm"],
     ["Altezza", r.altezza + " m"], ["Posizione", p.lat ? `${p.lat.toFixed(6)}, ${p.lon.toFixed(6)} (±${Math.round(p.acc)} m)` : "—"],
     ["Problematiche", r.problematiche], ["Note", r.note], ["Interventi e nuova CPC", r.interventi], ["Strumento", r.strumento],
