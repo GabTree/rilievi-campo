@@ -3,7 +3,18 @@
  * salvataggio offline (IndexedDB) e sincronizzazione su OneDrive (Microsoft Graph). */
 "use strict";
 
+const APP_VERSION = "0.2.2";
 const CFG = window.APP_CONFIG || {};
+// errori imprevisti: mostrati in rosso in alto, per capire subito cosa non va
+function showErr(msg) {
+  const b = document.getElementById("errBanner");
+  if (!b) return;
+  b.textContent = "Errore: " + msg + "\n(tocca per chiudere)";
+  b.classList.remove("hidden");
+  b.onclick = () => b.classList.add("hidden");
+}
+window.addEventListener("error", (e) => showErr(`${e.message} (${(e.filename || "").split("/").pop()}:${e.lineno})`));
+window.addEventListener("unhandledrejection", (e) => showErr(String((e.reason && e.reason.message) || e.reason)));
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 const toRad = (d) => (d * Math.PI) / 180;
@@ -214,6 +225,7 @@ const MapView = {
     else if (this.follow) this.map.panTo(ll, { animate: true });
     const q = f.acc <= 5 ? "ok" : f.acc <= 15 ? "" : "warn";
     $("#mapInfo").innerHTML = `${f.lat.toFixed(6)}, ${f.lon.toFixed(6)} · <span class="${q}">±${Math.round(f.acc)} m</span>`;
+    $("#btnGpsOn").classList.add("hidden");
   },
   heading(h) {
     const c = document.getElementById("meCone");
@@ -245,13 +257,22 @@ const GPS = {
         updateGpsUI();
         MapView.update(fix);
       },
-      (err) => { $("#gpsInfo").textContent = "GPS non disponibile: " + err.message; },
+      (err) => gpsError(err),
       { enableHighAccuracy: true, maximumAge: 0, timeout: 30000 }
     );
   },
   stop() { if (this.watch !== null) navigator.geolocation.clearWatch(this.watch); this.watch = null; },
   current() { return this.fixed || this.best || this.last; },
 };
+function gpsError(err) {
+  const msg = err.code === 1
+    ? "Posizione non consentita. iPhone: Impostazioni → Privacy e sicurezza → Localizzazione → Siti web di Safari → «Mentre usi l'app». Poi tocca «Attiva posizione»."
+    : err.code === 3 ? "Il GPS non risponde ancora (sei al chiuso?). Riprovo…" : "GPS non disponibile: " + err.message;
+  $("#gpsInfo").textContent = msg;
+  $("#mapInfo").textContent = msg;
+  $("#btnGpsOn").classList.toggle("hidden", err.code === 3);
+  if (err.code !== 3) GPS.stop();
+}
 function updateGpsUI() {
   const f = GPS.current();
   if (!f) return;
@@ -851,7 +872,11 @@ async function renderSettings() {
   $("#btnLogout").classList.toggle("hidden", !A || !A.connected());
   const tpl = await DB.getKV("areteTemplate");
   $("#areteTplInfo").textContent = tpl ? `Caricato: ${tpl.name} (${new Date(tpl.date).toLocaleDateString("it-IT")})` : "Nessun modello caricato";
-  $("#verInfo").textContent = "Versione " + (CFG.appVersion || "");
+  let perm = "?";
+  try { if (navigator.permissions) perm = (await navigator.permissions.query({ name: "geolocation" })).state; } catch (e) { /* Safari vecchi */ }
+  const sw = navigator.serviceWorker && navigator.serviceWorker.controller ? "attivo" : "no";
+  $("#verInfo").innerHTML = `App ${APP_VERSION} · mappa ${window.L ? "ok" : "NON caricata"} · posizione: ${perm} · ` +
+    `ultimo GPS: ${GPS.last ? "±" + Math.round(GPS.last.acc) + " m" : "nessuno"} · offline: ${sw}`;
 }
 function setNet() {
   const on = navigator.onLine;
@@ -1026,8 +1051,12 @@ async function main() {
 
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
   await Auth.init().catch((e) => console.warn(e));
-  MapView.init();
+  try { MapView.init(); } catch (e) { showErr("mappa: " + e.message); }
   GPS.start();
+  $("#btnGpsOn").addEventListener("click", () => {
+    $("#mapInfo").textContent = "Richiesta della posizione…";
+    navigator.geolocation.getCurrentPosition(() => { GPS.stop(); GPS.start(); }, gpsError, { enableHighAccuracy: true, timeout: 20000 });
+  });
   ARETE.init().then(() => { ARETE.build($("#areteBox")); window.ARETE_READY = true; }).catch((e) => console.warn("ARETÉ", e));
   const A = providerAuth();
   if (A && A.connected() && !S.setupDone) {

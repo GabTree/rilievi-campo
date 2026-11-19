@@ -9,7 +9,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Rilievi">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="stylesheet" href="vendor/leaflet.css">
+<link rel="stylesheet" href="vendor/leaflet.css?v=0.2.2">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <link rel="icon" href="icons/icon-192.png">
 <title>Rilievi in campo</title>
@@ -67,6 +67,8 @@
   .me-cone { display: none; position: absolute; inset: 0; transform-origin: 50% 50%;
     background: conic-gradient(from -30deg at 50% 50%, rgba(26,115,232,.45) 0deg, rgba(26,115,232,0) 60deg, transparent 60deg);
     -webkit-mask: radial-gradient(circle, #000 0 30px, transparent 30px); mask: radial-gradient(circle, #000 0 30px, transparent 30px); border-radius: 50%; }
+  #errBanner { position: fixed; top: calc(6px + var(--safe-top)); left: 8px; right: 8px; z-index: 50; background: #b3261e; color: #fff;
+    border-radius: 12px; padding: 10px 12px; font-size: 13px; white-space: pre-wrap; }
   .mapbtn.follow { background: var(--verde); color: #fff; }
   .needle-fixed { position: absolute; left: 50%; top: -6px; transform: translateX(-50%); width: 0; height: 0;
     border-left: 10px solid transparent; border-right: 10px solid transparent; border-top: 18px solid var(--rosso); }
@@ -168,7 +170,8 @@
   <div class="card mapcard">
     <div id="map"></div>
     <button class="mapbtn" id="btnCenter" title="Centra sulla mia posizione">◎</button>
-    <div class="mapinfo muted" id="mapInfo">In attesa del GPS…</div>
+    <div class="mapinfo muted"><span id="mapInfo">In attesa del GPS…</span>
+      <button class="iconbtn hidden" id="btnGpsOn" style="margin-top:6px;width:100%">Attiva posizione</button></div>
   </div>
   <div class="card compass-mini">
     <div class="rose"><div class="needle-fixed"></div><svg id="roseSvg" viewBox="-110 -110 220 220"></svg></div>
@@ -334,7 +337,7 @@
     <label class="f">Dimensione foto</label>
     <div class="seg" id="segQuality"><button data-v="2048">Ridotta (veloce)</button><button data-v="0">Piena</button></div>
   </div>
-  <div class="muted" id="verInfo"></div>
+  <div class="card"><label class="f">Diagnostica</label><div class="muted" id="verInfo"></div></div>
 </section>
 
 <nav class="tabs">
@@ -343,13 +346,14 @@
   <button data-go="settings"><span class="ic">⚙️</span>Impostazioni</button>
 </nav>
 <div class="toast" id="toast"></div>
+<div id="errBanner" class="hidden"></div>
 
-<script src="config.js"></script>
-<script src="vendor/msal-browser.min.js"></script>
-<script src="vendor/piexif.js"></script>
-<script src="vendor/jszip.min.js"></script>
-<script src="vendor/leaflet.js"></script>
-<script src="arete.js"></script>
-<script src="app.js"></script>
+<script src="config.js?v=0.2.2"></script>
+<script src="vendor/msal-browser.min.js?v=0.2.2"></script>
+<script src="vendor/piexif.js?v=0.2.2"></script>
+<script src="vendor/jszip.min.js?v=0.2.2"></script>
+<script src="vendor/leaflet.js?v=0.2.2"></script>
+<script src="arete.js?v=0.2.2"></script>
+<script src="app.js?v=0.2.2"></script>
 </body>
 </html>

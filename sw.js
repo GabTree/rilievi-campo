@@ -1,5 +1,5 @@
 // Service worker: conserva l'app sul telefono per l'uso offline.
-const CACHE = "rilievi-v0.2.1";
+const CACHE = "rilievi-v0.2.2";
 const TILES = "rilievi-tiles";
 let trimming = false;
 async function trimTiles(c) {   // tiene al massimo ~1500 riquadri (circa 30 MB)
@@ -29,7 +29,9 @@ self.addEventListener("fetch", (e) => {
   }
   if (e.request.method !== "GET" || u.origin !== location.origin) return;   // Graph, Google e login: sempre in rete
   // rete prima (per avere gli aggiornamenti), cache se offline
-  e.respondWith(fetch(e.request).then((r) => {
+  // "no-cache": chiede sempre al server se il file è cambiato, così non si mischiano versioni diverse
+  const req = e.request.mode === "navigate" ? new Request(e.request.url, { cache: "no-cache" }) : new Request(e.request, { cache: "no-cache" });
+  e.respondWith(fetch(req).then((r) => {
     const copy = r.clone();
     caches.open(CACHE).then((c) => c.put(e.request, copy));
     return r;
