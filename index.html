@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#2e5e3e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Rilievi">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="icon" href="icons/icon-192.png">
+<title>Rilievi in campo</title>
+<style>
+  :root {
+    --verde: #2e5e3e; --verde-2: #3f7a52; --chiaro: #e8f0ea; --giallo: #fff2cc;
+    --testo: #1d1d1b; --grigio: #6b6b6b; --rosso: #b3261e; --bordo: #d6d6d6;
+    --safe-top: env(safe-area-inset-top); --safe-bot: env(safe-area-inset-bottom);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; font-family: -apple-system, system-ui, "Segoe UI", Roboto, Arial, sans-serif;
+    color: var(--testo); background: #f6f7f5; font-size: 17px; }
+  button { font: inherit; }
+  .screen { display: none; min-height: 100%; padding: calc(12px + var(--safe-top)) 14px calc(90px + var(--safe-bot)); }
+  .screen.active { display: block; }
+  header.bar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  header.bar h1 { font-size: 20px; margin: 0; flex: 1; color: var(--verde); }
+  .iconbtn { border: 0; background: var(--chiaro); color: var(--verde); border-radius: 12px; padding: 10px 14px; font-weight: 600; }
+  .card { background: #fff; border-radius: 16px; padding: 14px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .big { width: 100%; border: 0; border-radius: 14px; padding: 16px; font-size: 18px; font-weight: 700; color: #fff; background: var(--verde); }
+  .big.sec { background: var(--chiaro); color: var(--verde); }
+  .big:disabled { opacity: .5; }
+  .row { display: flex; gap: 10px; }
+  .row > * { flex: 1; }
+  label.f { display: block; font-size: 14px; font-weight: 700; color: var(--verde); margin: 12px 0 4px; }
+  label.f .req { color: var(--rosso); }
+  input[type=text], input[type=number], input[type=date], textarea, select {
+    width: 100%; font: inherit; font-size: 17px; padding: 12px; border-radius: 12px; border: 1px solid var(--bordo); background: var(--giallo); }
+  textarea { min-height: 84px; resize: vertical; }
+  .seg { display: flex; gap: 6px; flex-wrap: wrap; }
+  .seg button { flex: 1 1 30%; border: 2px solid var(--verde); background: #fff; color: var(--verde); border-radius: 12px; padding: 12px 6px; font-weight: 700; font-size: 15px; }
+  .seg button.on { background: var(--verde); color: #fff; }
+  .muted { color: var(--grigio); font-size: 14px; }
+  .warn { color: var(--rosso); font-weight: 700; }
+  .ok { color: var(--verde-2); font-weight: 700; }
+  .hidden { display: none !important; }
+
+  /* Bussola */
+  .compass-wrap { display: flex; flex-direction: column; align-items: center; }
+  .rose { width: 220px; height: 220px; position: relative; }
+  .rose svg { width: 100%; height: 100%; transition: transform .12s linear; }
+  .needle-fixed { position: absolute; left: 50%; top: -6px; transform: translateX(-50%); width: 0; height: 0;
+    border-left: 10px solid transparent; border-right: 10px solid transparent; border-top: 18px solid var(--rosso); }
+  .deg { font-size: 44px; font-weight: 800; margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .compass-small { display: flex; align-items: center; gap: 10px; }
+
+  /* Lista */
+  .item { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid #eee; }
+  .item:last-child { border-bottom: 0; }
+  .item img { width: 56px; height: 56px; object-fit: cover; border-radius: 10px; background: #ddd; }
+  .item .t { flex: 1; min-width: 0; }
+  .item .t b { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .badge { font-size: 12px; font-weight: 700; padding: 4px 8px; border-radius: 999px; white-space: nowrap; }
+  .badge.pending { background: #fde7c3; color: #8a5300; }
+  .badge.synced { background: #d7ecd9; color: #1f5a2c; }
+  .badge.error { background: #f8d7d5; color: var(--rosso); }
+
+  /* Foto nella scheda */
+  .thumbs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 8px; }
+  .thumbs .th { position: relative; }
+  .thumbs img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 10px; display: block; }
+  .thumbs .del { position: absolute; top: 4px; right: 4px; border: 0; border-radius: 999px; width: 28px; height: 28px;
+    background: rgba(0,0,0,.6); color: #fff; font-weight: 700; }
+  .thumbs .cap { font-size: 12px; color: var(--grigio); }
+
+  /* Fotocamera */
+  #camera { padding: 0; background: #000; color: #fff; }
+  #camera.active { display: flex; flex-direction: column; height: 100%; }
+  .cam-view { position: relative; flex: 1; overflow: hidden; }
+  .cam-view video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .cam-top { position: absolute; top: calc(10px + var(--safe-top)); left: 10px; right: 10px; display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+  .pill { background: rgba(0,0,0,.55); border-radius: 14px; padding: 8px 12px; font-size: 15px; }
+  .cam-arrow { width: 64px; height: 64px; }
+  .cam-bottom { padding: 14px 18px calc(18px + var(--safe-bot)); display: flex; align-items: center; justify-content: space-between; background: #000; }
+  .shutter { width: 78px; height: 78px; border-radius: 50%; border: 5px solid #fff; background: #fff; box-shadow: inset 0 0 0 4px #000; }
+  .shutter:active { transform: scale(.94); }
+  .cam-btn { border: 0; background: #222; color: #fff; border-radius: 12px; padding: 12px 14px; font-weight: 700; min-width: 92px; }
+  .cam-btn.on { background: var(--verde-2); }
+  .flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; transition: opacity .2s; }
+  .count { position: absolute; bottom: 10px; left: 10px; }
+
+  nav.tabs { position: fixed; left: 0; right: 0; bottom: 0; display: flex; background: #fff; border-top: 1px solid #e4e4e4;
+    padding: 6px 6px calc(6px + var(--safe-bot)); z-index: 5; }
+  nav.tabs button { flex: 1; border: 0; background: none; padding: 8px 4px; font-size: 13px; font-weight: 700; color: var(--grigio); }
+  nav.tabs button.on { color: var(--verde); }
+  nav.tabs .ic { display: block; font-size: 22px; line-height: 1.1; }
+  .toast { position: fixed; left: 16px; right: 16px; bottom: calc(86px + var(--safe-bot)); background: #222; color: #fff; padding: 12px 14px;
+    border-radius: 12px; z-index: 20; opacity: 0; transition: opacity .25s; pointer-events: none; }
+  .toast.show { opacity: .95; }
+  .kv { display: grid; grid-template-columns: 40% 60%; gap: 6px 10px; font-size: 15px; }
+  .kv div:nth-child(odd) { color: var(--grigio); }
+</style>
+</head>
+<body>
+
+<!-- HOME: bussola + azioni -->
+<section id="home" class="screen active">
+  <header class="bar"><h1>Rilievi in campo</h1><span id="netState" class="badge pending">offline</span></header>
+  <div class="card compass-wrap">
+    <div class="rose"><div class="needle-fixed"></div><svg id="roseSvg" viewBox="-110 -110 220 220"></svg></div>
+    <div class="deg" id="degBig">—</div>
+    <div class="muted" id="compassInfo">Tocca "Attiva bussola"</div>
+    <button class="big sec" id="btnCompass" style="margin-top:10px">Attiva bussola</button>
+  </div>
+  <button class="big" id="btnNew">+ Nuovo rilievo</button>
+  <div class="card" style="margin-top:12px">
+    <div class="row" style="align-items:center">
+      <div><b id="pendingCount">0</b> <span class="muted">rilievi in attesa di invio</span></div>
+      <button class="iconbtn" id="btnSync" style="flex:0 0 auto">Sincronizza ora</button>
+    </div>
+    <div class="muted" id="syncInfo" style="margin-top:6px"></div>
+  </div>
+</section>
+
+<!-- SCHEDA DI RILIEVO -->
+<section id="form" class="screen">
+  <header class="bar"><button class="iconbtn" id="btnFormBack">‹ Annulla</button><h1>Nuovo rilievo</h1></header>
+
+  <div class="card">
+    <label class="f">Lavoro / cantiere <span class="req">*</span></label>
+    <input type="text" id="fLavoro" list="lavoriList" placeholder="es. Viale dei Tigli – Comune X" autocomplete="off">
+    <datalist id="lavoriList"></datalist>
+    <label class="f">Tipo di cantiere</label>
+    <div class="seg" id="segCantiere"><button data-v="Comune">Comune</button><button data-v="Privato">Privato</button></div>
+    <label class="f">Tipo di valutazione <span class="req">*</span></label>
+    <div class="seg" id="segValutazione"><button data-v="Fitostatica">Fitostatica</button><button data-v="Strumentale">Strumentale</button><button data-v="Sorveglianza scavo">Sorveglianza scavo</button></div>
+  </div>
+
+  <div class="card">
+    <div id="boxComune">
+      <div class="row">
+        <div><label class="f">N. gs <span class="req">*</span></label><input type="text" inputmode="numeric" id="fNgs"></div>
+        <div><label class="f">N. cart</label><input type="text" inputmode="numeric" id="fNcart"></div>
+      </div>
+    </div>
+    <div id="boxPrivato" class="hidden">
+      <label class="f">N. progressivo <span class="req">*</span></label><input type="number" inputmode="numeric" id="fNprog">
+    </div>
+    <div class="muted warn hidden" id="dupWarn" style="margin-top:6px"></div>
+  </div>
+
+  <div class="card">
+    <label class="f">Posizione GPS</label>
+    <div id="gpsInfo" class="muted">In attesa del GPS…</div>
+    <div class="row" style="margin-top:8px">
+      <button class="iconbtn" id="btnGpsFix">Fissa posizione</button>
+      <a class="iconbtn hidden" id="lnkMaps" target="_blank" rel="noopener" style="text-align:center;text-decoration:none">Apri in Maps</a>
+    </div>
+  </div>
+
+  <div class="card">
+    <label class="f">Foto <span class="req">*</span></label>
+    <div class="row">
+      <button class="big" id="btnCamera">Fotocamera</button>
+      <button class="big sec" id="btnSysCam" style="flex:0 0 38%">Foto di sistema</button>
+    </div>
+    <input type="file" id="sysCamInput" accept="image/*" capture="environment" class="hidden">
+    <div class="thumbs" id="thumbs"></div>
+  </div>
+
+  <div class="card">
+    <label class="f">Specie <span class="req">*</span></label>
+    <input type="text" id="fSpecie" list="specieList" autocomplete="off" placeholder="Scrivi per cercare">
+    <datalist id="specieList"></datalist>
+    <div class="row">
+      <div><label class="f">Diametro a 120 cm (cm) <span class="req">*</span></label><input type="number" inputmode="decimal" id="fDiam"></div>
+      <div><label class="f">Altezza (m) <span class="req">*</span></label><input type="number" inputmode="decimal" id="fAlt"></div>
+    </div>
+    <label class="f">Problematiche <span class="req">*</span></label>
+    <textarea id="fProb" placeholder="Descrizione libera (puoi usare la dettatura della tastiera)"></textarea>
+    <label class="f">Note</label>
+    <textarea id="fNote"></textarea>
+    <label class="f">Interventi e nuova CPC</label>
+    <textarea id="fInt"></textarea>
+  </div>
+
+  <div class="card hidden" id="boxStrum">
+    <label class="f">Strumento usato</label>
+    <input type="text" id="fStrum" list="strumList" autocomplete="off">
+    <datalist id="strumList"><option value="Resistografo"><option value="Tomografo sonico"><option value="Pulling test"></datalist>
+    <label class="f">Allegati (grafici o file dello strumento)</label>
+    <input type="file" id="fAllegati" multiple>
+    <div class="muted" id="allegatiInfo"></div>
+  </div>
+
+  <button class="big" id="btnSave">Salva rilievo</button>
+  <div class="muted warn" id="formErr" style="margin-top:8px"></div>
+</section>
+
+<!-- FOTOCAMERA -->
+<section id="camera" class="screen">
+  <div class="cam-view">
+    <video id="video" playsinline muted autoplay></video>
+    <div class="flash" id="flash"></div>
+    <div class="cam-top">
+      <div class="pill" id="camHeading">—°</div>
+      <svg class="cam-arrow" id="camArrow" viewBox="-50 -50 100 100"></svg>
+    </div>
+    <div class="pill count" id="camCount">0 foto</div>
+  </div>
+  <div class="cam-bottom">
+    <button class="cam-btn on" id="btnArrow">Freccia N: sì</button>
+    <button class="shutter" id="btnShot" aria-label="Scatta"></button>
+    <button class="cam-btn" id="btnCamDone">Fine</button>
+  </div>
+</section>
+
+<!-- LISTA -->
+<section id="list" class="screen">
+  <header class="bar"><h1>Rilievi salvati</h1></header>
+  <div class="card" id="listBox"><div class="muted">Nessun rilievo.</div></div>
+</section>
+
+<!-- DETTAGLIO -->
+<section id="detail" class="screen">
+  <header class="bar"><button class="iconbtn" id="btnDetBack">‹ Indietro</button><h1 id="detTitle">Rilievo</h1></header>
+  <div class="card"><div class="kv" id="detKv"></div></div>
+  <div class="card"><div class="thumbs" id="detThumbs"></div></div>
+  <div class="row">
+    <button class="big sec" id="btnShare">Condividi file</button>
+    <button class="big sec" id="btnDelete" style="color:var(--rosso)">Elimina</button>
+  </div>
+</section>
+
+<!-- IMPOSTAZIONI -->
+<section id="settings" class="screen">
+  <header class="bar"><h1>Impostazioni</h1></header>
+  <div class="card">
+    <label class="f">Account OneDrive</label>
+    <div id="acctInfo" class="muted">Non collegato</div>
+    <div class="row" style="margin-top:8px"><button class="big" id="btnLogin">Collega OneDrive</button><button class="big sec hidden" id="btnLogout">Scollega</button></div>
+    <label class="f">Cartella su OneDrive</label>
+    <input type="text" id="sFolder" placeholder="Rilievi">
+  </div>
+  <div class="card">
+    <label class="f">Nome operatore</label><input type="text" id="sName">
+    <label class="f">Iniziali (per il nome delle cartelle)</label><input type="text" id="sInit" maxlength="4" placeholder="es. VA">
+  </div>
+  <div class="card">
+    <label class="f">Nord di riferimento</label>
+    <div class="seg" id="segNorth"><button data-v="T">Geografico</button><button data-v="M">Magnetico</button></div>
+    <label class="f">Declinazione magnetica (°, est positiva)</label>
+    <input type="number" inputmode="decimal" step="0.1" id="sDecl">
+    <div class="muted">Lazio/Italia centrale: circa +3,5° (2026). Si aggiunge al nord magnetico per ottenere quello geografico.</div>
+    <label class="f">Dimensione foto</label>
+    <div class="seg" id="segQuality"><button data-v="2048">Ridotta (veloce)</button><button data-v="0">Piena</button></div>
+  </div>
+  <div class="muted" id="verInfo"></div>
+</section>
+
+<nav class="tabs">
+  <button data-go="home" class="on"><span class="ic">🧭</span>Bussola</button>
+  <button data-go="list"><span class="ic">🗂️</span>Rilievi</button>
+  <button data-go="settings"><span class="ic">⚙️</span>Impostazioni</button>
+</nav>
+<div class="toast" id="toast"></div>
+
+<script src="config.js"></script>
+<script src="vendor/msal-browser.min.js"></script>
+<script src="vendor/piexif.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
