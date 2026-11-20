@@ -3,7 +3,7 @@
  * salvataggio offline (IndexedDB) e sincronizzazione su OneDrive (Microsoft Graph). */
 "use strict";
 
-const APP_VERSION = "0.4.1";
+const APP_VERSION = "0.4.2";
 const CFG = window.APP_CONFIG || {};
 // errori imprevisti: mostrati in rosso in alto, per capire subito cosa non va
 function showErr(msg) {
@@ -63,7 +63,7 @@ const DB = {
 };
 
 /* ---------------------------------------------------------- Settings */
-const S = { folder: "Rilievi", name: "", init: "", north: "T", decl: 3.5, quality: 2048, arrow: true,
+const S = { basemap: "osm", folder: "Rilievi", name: "", init: "", north: "T", decl: 3.5, quality: 2048, arrow: true,
   provider: "", msClientId: "", gClientId: "", setupDone: false, areteOn: false,
   studio: "", qualifica: "", out: { schede: true, arete: true, foto: true, riepilogo: true, vettoriale: false } };
 async function loadSettings() {
@@ -190,6 +190,52 @@ function updateCompassUI(c) {
 }
 
 
+/* ------------------------------------------------- Sfondo mappa: stradale o satellite */
+// Satellite = Esri World Imagery (foto aeree/satellitari, utili per vedere le chiome dall'alto).
+// Serve una chiave gratuita ArcGIS Location Platform in config.js (esriKey); senza chiave il pulsante non compare.
+// Le immagini satellitari NON vengono salvate per l'offline (lo vietano i termini Esri): senza rete si torna allo stradale.
+const Basemap = {
+  maps: [],
+  hasSat() { return !!(window.APP_CONFIG && APP_CONFIG.esriKey); },
+  current() { return this.hasSat() && S.basemap === "sat" && navigator.onLine ? "sat" : "osm"; },
+  layer(kind) {
+    if (kind === "sat") return L.tileLayer(
+      "https://ibasemaps-api.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}?token=" + encodeURIComponent(APP_CONFIG.esriKey),
+      { maxNativeZoom: 19, maxZoom: 21, attribution: 'Powered by <a href="https://www.esri.com">Esri</a> · Maxar, Earthstar Geographics' });
+    return L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+      { maxNativeZoom: 19, maxZoom: 21, attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' });
+  },
+  attach(map) {
+    const entry = { map, kind: null, tl: null, btn: null };
+    this.maps.push(entry);
+    if (this.hasSat()) {
+      const Ctl = L.Control.extend({ options: { position: "topleft" }, onAdd: () => {
+        const b = L.DomUtil.create("button", "basebtn");
+        b.type = "button";
+        L.DomEvent.disableClickPropagation(b);
+        L.DomEvent.on(b, "click", (ev) => { L.DomEvent.preventDefault(ev); this.toggle(); });
+        entry.btn = b; return b;
+      } });
+      new Ctl().addTo(map);
+    }
+    this.apply(entry);
+  },
+  apply(e) {
+    const k = this.current();
+    if (e.btn) { e.btn.textContent = k === "sat" ? "Mappa" : "Satellite"; e.btn.classList.toggle("on", k === "sat"); }
+    if (e.kind === k) return;
+    if (e.tl) e.map.removeLayer(e.tl);
+    e.tl = this.layer(k).addTo(e.map); e.tl.bringToBack(); e.kind = k;
+  },
+  applyAll() { this.maps.forEach((e) => this.apply(e)); },
+  toggle() {
+    if (!navigator.onLine) { toast("Satellite non disponibile senza rete"); return; }
+    S.basemap = S.basemap === "sat" ? "osm" : "sat"; saveSettings(); this.applyAll();
+  },
+};
+window.addEventListener("online", () => Basemap.applyAll());
+window.addEventListener("offline", () => Basemap.applyAll());
+
 /* -------------------------------------------------------------- Mappa */
 // Leaflet + OpenStreetMap: gratuito, senza chiave. Pallino blu = posizione, cono = direzione della bussola,
 // pallini verdi = rilievi salvati.
@@ -198,9 +244,7 @@ const MapView = {
   init() {
     if (!window.L || this.map) return;
     this.map = L.map("map", { zoomControl: false, attributionControl: true }).setView([41.9, 12.5], 6);
-    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      maxZoom: 19, attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-    }).addTo(this.map);
+    Basemap.attach(this.map);
     this.layer = L.layerGroup().addTo(this.map);
     this.map.on("dragstart", () => { this.follow = false; $("#btnCenter").classList.remove("follow"); });
     $("#btnCenter").classList.add("follow");
@@ -407,7 +451,7 @@ function TreeMap(elId, onMove) {
 TreeMap.prototype.ensure = function () {
   if (this.map || !window.L) return;
   this.map = L.map(this.el, { zoomControl: false, attributionControl: true }).setView([41.9, 12.5], 6);
-  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(this.map);
+  Basemap.attach(this.map);
 };
 TreeMap.prototype.set = function (lat, lon, center) {
   this.ensure();
@@ -1120,7 +1164,7 @@ async function renderSettings() {
   let perm = "?";
   try { if (navigator.permissions) perm = (await navigator.permissions.query({ name: "geolocation" })).state; } catch (e) { /* Safari vecchi */ }
   const sw = navigator.serviceWorker && navigator.serviceWorker.controller ? "attivo" : "no";
-  $("#verInfo").innerHTML = `App ${APP_VERSION} · mappa ${window.L ? "ok" : "NON caricata"} · posizione: ${perm} · ` +
+  $("#verInfo").innerHTML = `App ${APP_VERSION} · mappa ${window.L ? "ok" : "NON caricata"} · satellite ${Basemap.hasSat() ? "attivo" : "chiave mancante"} · posizione: ${perm} · ` +
     `ultimo GPS: ${GPS.last ? "±" + Math.round(GPS.last.acc) + " m" : "nessuno"} · offline: ${sw}`;
 }
 function setNet() {
