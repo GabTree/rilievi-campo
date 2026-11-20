@@ -7,12 +7,12 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Rilievi">
+<meta name="apple-mobile-web-app-title" content="RilieviCampo">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="stylesheet" href="vendor/leaflet.css?v=0.2.2">
+<link rel="stylesheet" href="vendor/leaflet.css?v=0.3.0">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <link rel="icon" href="icons/icon-192.png">
-<title>Rilievi in campo</title>
+<title>Rilievi di Campo-GabTree</title>
 <style>
   :root {
     --verde: #2e5e3e; --verde-2: #3f7a52; --chiaro: #e8f0ea; --giallo: #fff2cc;
@@ -67,8 +67,11 @@
   .me-cone { display: none; position: absolute; inset: 0; transform-origin: 50% 50%;
     background: conic-gradient(from -30deg at 50% 50%, rgba(26,115,232,.45) 0deg, rgba(26,115,232,0) 60deg, transparent 60deg);
     -webkit-mask: radial-gradient(circle, #000 0 30px, transparent 30px); mask: radial-gradient(circle, #000 0 30px, transparent 30px); border-radius: 50%; }
-  #errBanner { position: fixed; top: calc(6px + var(--safe-top)); left: 8px; right: 8px; z-index: 50; background: #b3261e; color: #fff;
+  #errBanner { position: fixed; top: calc(6px + var(--safe-top)); left: 8px; right: 8px; z-index: 1002; background: #b3261e; color: #fff;
     border-radius: 12px; padding: 10px 12px; font-size: 13px; white-space: pre-wrap; }
+  .minimap { height: 220px; border-radius: 12px; margin: 8px 0 6px; background: #e6ebe7; }
+  .brand { display: block; font-size: 13px; letter-spacing: .08em; color: var(--verde-2); font-weight: 800; }
+  .tree-pin { width: 22px; height: 22px; border-radius: 50%; background: #2e7d32; border: 3px solid #fff; box-shadow: 0 0 5px rgba(0,0,0,.5); }
   .mapbtn.follow { background: var(--verde); color: #fff; }
   .needle-fixed { position: absolute; left: 50%; top: -6px; transform: translateX(-50%); width: 0; height: 0;
     border-left: 10px solid transparent; border-right: 10px solid transparent; border-top: 18px solid var(--rosso); }
@@ -111,12 +114,12 @@
   .count { position: absolute; bottom: 10px; left: 10px; }
 
   nav.tabs { position: fixed; left: 0; right: 0; bottom: 0; display: flex; background: #fff; border-top: 1px solid #e4e4e4;
-    padding: 6px 6px calc(6px + var(--safe-bot)); z-index: 5; }
+    padding: 6px 6px calc(6px + var(--safe-bot)); z-index: 1000; }
   nav.tabs button { flex: 1; border: 0; background: none; padding: 8px 4px; font-size: 13px; font-weight: 700; color: var(--grigio); }
   nav.tabs button.on { color: var(--verde); }
   nav.tabs .ic { display: block; font-size: 22px; line-height: 1.1; }
   .toast { position: fixed; left: 16px; right: 16px; bottom: calc(86px + var(--safe-bot)); background: #222; color: #fff; padding: 12px 14px;
-    border-radius: 12px; z-index: 20; opacity: 0; transition: opacity .25s; pointer-events: none; }
+    border-radius: 12px; z-index: 1001; opacity: 0; transition: opacity .25s; pointer-events: none; }
   .toast.show { opacity: .95; }
   details { border-top: 1px solid #eee; padding: 8px 0; }
   details summary { font-weight: 800; color: var(--verde); font-size: 16px; padding: 6px 0; cursor: pointer; }
@@ -141,7 +144,7 @@
 
 <!-- PRIMO AVVIO -->
 <section id="welcome" class="screen">
-  <header class="bar"><h1>Benvenuto in Rilievi</h1></header>
+  <header class="bar"><h1>Benvenuto in Rilievi di Campo</h1></header>
   <div class="card steps">
     <div class="step"><b>Chi sei</b>
       <label class="f">Nome e cognome</label><input type="text" id="wName">
@@ -166,7 +169,7 @@
 
 <!-- HOME: bussola + azioni -->
 <section id="home" class="screen active">
-  <header class="bar"><h1>Rilievi in campo</h1><span id="netState" class="badge pending">offline</span></header>
+  <header class="bar"><h1>Rilievi di Campo<span class="brand">GabTree</span></h1><span id="netState" class="badge pending">offline</span></header>
   <div class="card mapcard">
     <div id="map"></div>
     <button class="mapbtn" id="btnCenter" title="Centra sulla mia posizione">◎</button>
@@ -194,9 +197,10 @@
 <!-- SCHEDA DI RILIEVO -->
 <section id="form" class="screen">
   <header class="bar"><button class="iconbtn" id="btnFormBack">‹ Annulla</button><h1>Nuovo rilievo</h1></header>
+  <div class="muted" id="formWho" style="margin:-4px 0 10px"></div>
 
   <div class="card">
-    <label class="f">Zona / cliente <span class="req">*</span></label>
+    <label class="f">Progetto (cliente / località) <span class="req">*</span></label>
     <input type="text" id="fLavoro" list="lavoriList" placeholder="es. Parco Rossi – Comune X" autocomplete="off">
     <datalist id="lavoriList"></datalist>
     <label class="f">Tipo</label>
@@ -206,21 +210,20 @@
   </div>
 
   <div class="card">
-    <div id="boxComune">
-      <div class="row">
-        <div><label class="f">N. gs <span class="req">*</span></label><input type="text" inputmode="numeric" id="fNgs"></div>
-        <div><label class="f">N. cart</label><input type="text" inputmode="numeric" id="fNcart"></div>
-      </div>
+    <div class="row">
+      <div id="boxGs"><label class="f">N. gs <span class="req">*</span></label><input type="text" inputmode="numeric" id="fNgs"></div>
+      <div><label class="f">N. cart</label><input type="text" inputmode="numeric" id="fNcart"></div>
+      <div><label class="f">N. progr. <span class="req" id="relReq">*</span></label><input type="number" inputmode="numeric" id="fNprog"></div>
     </div>
-    <div id="boxPrivato" class="hidden">
-      <label class="f">N. progressivo <span class="req">*</span></label><input type="number" inputmode="numeric" id="fNprog">
-    </div>
+    <div class="muted" id="nameprev" style="margin-top:8px"></div>
     <div class="muted warn hidden" id="dupWarn" style="margin-top:6px"></div>
   </div>
 
   <div class="card">
     <label class="f">Posizione GPS</label>
     <div id="gpsInfo" class="muted">In attesa del GPS…</div>
+    <div id="formMap" class="minimap"></div>
+    <div class="muted" id="formMapHint">Se il GPS non è preciso, trascina il pallino verde sull'albero.</div>
     <div class="row" style="margin-top:8px">
       <button class="iconbtn" id="btnGpsFix">Fissa posizione</button>
       <a class="iconbtn hidden" id="lnkMaps" target="_blank" rel="noopener" style="text-align:center;text-decoration:none">Apri in Maps</a>
@@ -245,10 +248,8 @@
       <div><label class="f">Diametro a 120 cm (cm) <span class="req">*</span></label><input type="number" inputmode="decimal" id="fDiam"></div>
       <div><label class="f">Altezza (m) <span class="req">*</span></label><input type="number" inputmode="decimal" id="fAlt"></div>
     </div>
-    <label class="f">Problematiche <span class="req">*</span></label>
+    <label class="f">Note di campo <span class="req">*</span></label>
     <textarea id="fProb" placeholder="Descrizione libera (puoi usare la dettatura della tastiera)"></textarea>
-    <label class="f">Note</label>
-    <textarea id="fNote"></textarea>
     <label class="f">Interventi e nuova CPC</label>
     <textarea id="fInt"></textarea>
   </div>
@@ -292,14 +293,25 @@
 
 <!-- LISTA -->
 <section id="list" class="screen">
-  <header class="bar"><h1>Rilievi salvati</h1></header>
-  <div class="card" id="listBox"><div class="muted">Nessun rilievo.</div></div>
+  <header class="bar"><h1>Progetti</h1></header>
+  <div class="card" id="listBox"><div class="muted">Nessun progetto.</div></div>
+</section>
+
+<!-- PROGETTO -->
+<section id="project" class="screen">
+  <header class="bar"><button class="iconbtn" id="btnPrjBack">‹ Progetti</button><h1 id="prjTitle">Progetto</h1></header>
+  <button class="big" id="btnPrjNew">+ Nuovo rilievo in questo progetto</button>
+  <div class="card" id="prjBox" style="margin-top:12px"></div>
 </section>
 
 <!-- DETTAGLIO -->
 <section id="detail" class="screen">
   <header class="bar"><button class="iconbtn" id="btnDetBack">‹ Indietro</button><h1 id="detTitle">Rilievo</h1></header>
   <div class="card"><div class="kv" id="detKv"></div></div>
+  <div class="card"><label class="f">Posizione della pianta</label>
+    <div id="detMap" class="minimap"></div>
+    <div class="muted">Trascina il pallino verde per correggere la posizione.</div>
+    <button class="big hidden" id="btnSavePos" style="margin-top:8px">Salva nuova posizione</button></div>
   <div class="card"><div class="thumbs" id="detThumbs"></div></div>
   <div class="row">
     <button class="big sec" id="btnShare">Condividi file</button>
@@ -325,12 +337,10 @@
     <input type="file" id="sAreteTpl" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style="margin-top:8px">
   </div>
   <div class="card">
-    <label class="f">Nome operatore</label><input type="text" id="sName">
+    <label class="f">Nome del rilevatore</label><input type="text" id="sName">
     <label class="f">Iniziali (per il nome delle cartelle)</label><input type="text" id="sInit" maxlength="4" placeholder="es. VA">
   </div>
   <div class="card">
-    <label class="f">Nord di riferimento</label>
-    <div class="seg" id="segNorth"><button data-v="T">Geografico</button><button data-v="M">Magnetico</button></div>
     <label class="f">Declinazione magnetica (°, est positiva)</label>
     <input type="number" inputmode="decimal" step="0.1" id="sDecl">
     <div class="muted">Lazio/Italia centrale: circa +3,5° (2026). Si aggiunge al nord magnetico per ottenere quello geografico.</div>
@@ -342,18 +352,18 @@
 
 <nav class="tabs">
   <button data-go="home" class="on"><span class="ic">🧭</span>Bussola</button>
-  <button data-go="list"><span class="ic">🗂️</span>Rilievi</button>
+  <button data-go="list"><span class="ic">🗂️</span>Progetti</button>
   <button data-go="settings"><span class="ic">⚙️</span>Impostazioni</button>
 </nav>
 <div class="toast" id="toast"></div>
 <div id="errBanner" class="hidden"></div>
 
-<script src="config.js?v=0.2.2"></script>
-<script src="vendor/msal-browser.min.js?v=0.2.2"></script>
-<script src="vendor/piexif.js?v=0.2.2"></script>
-<script src="vendor/jszip.min.js?v=0.2.2"></script>
-<script src="vendor/leaflet.js?v=0.2.2"></script>
-<script src="arete.js?v=0.2.2"></script>
-<script src="app.js?v=0.2.2"></script>
+<script src="config.js?v=0.3.0"></script>
+<script src="vendor/msal-browser.min.js?v=0.3.0"></script>
+<script src="vendor/piexif.js?v=0.3.0"></script>
+<script src="vendor/jszip.min.js?v=0.3.0"></script>
+<script src="vendor/leaflet.js?v=0.3.0"></script>
+<script src="arete.js?v=0.3.0"></script>
+<script src="app.js?v=0.3.0"></script>
 </body>
 </html>

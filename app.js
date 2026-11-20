@@ -3,7 +3,7 @@
  * salvataggio offline (IndexedDB) e sincronizzazione su OneDrive (Microsoft Graph). */
 "use strict";
 
-const APP_VERSION = "0.2.2";
+const APP_VERSION = "0.3.0";
 const CFG = window.APP_CONFIG || {};
 // errori imprevisti: mostrati in rosso in alto, per capire subito cosa non va
 function showErr(msg) {
@@ -256,6 +256,7 @@ const GPS = {
         if (!this.best || fix.acc <= this.best.acc || fix.time - this.best.time > 60000) this.best = fix;
         updateGpsUI();
         MapView.update(fix);
+        formMapFollowGps(fix);
       },
       (err) => gpsError(err),
       { enableHighAccuracy: true, maximumAge: 0, timeout: 30000 }
@@ -380,7 +381,7 @@ function makePhotos(source, w, h, meta) {
 }
 function shotMeta() {
   const f = GPS.current() || {};
-  return { time: Date.now(), lat: f.lat, lon: f.lon, acc: f.acc, heading: Compass.heading, ref: S.north,
+  return { time: Date.now(), lat: f.lat, lon: f.lon, acc: f.acc, heading: Compass.heading, ref: "T",
            arrow: S.arrow, compassBad: Compass.status().bad };
 }
 
@@ -393,20 +394,63 @@ function newDraft() {
 function setSeg(id, v) { $$(`#${id} button`).forEach((b) => b.classList.toggle("on", b.dataset.v === String(v))); }
 function bindSeg(id, fn) { $$(`#${id} button`).forEach((b) => b.addEventListener("click", () => { setSeg(id, b.dataset.v); fn(b.dataset.v); })); }
 
-async function openForm() {
+/* ---------------------------------------- Mappe piccole con il pallino della pianta */
+// Pallino verde trascinabile: serve a correggere la posizione quando il GPS sotto chioma è impreciso.
+function TreeMap(elId, onMove) {
+  this.el = elId; this.map = null; this.pin = null; this.onMove = onMove;
+}
+TreeMap.prototype.ensure = function () {
+  if (this.map || !window.L) return;
+  this.map = L.map(this.el, { zoomControl: false, attributionControl: true }).setView([41.9, 12.5], 6);
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(this.map);
+};
+TreeMap.prototype.set = function (lat, lon, center) {
+  this.ensure();
+  if (!this.map) return;
+  const ll = [lat, lon];
+  if (!this.pin) {
+    this.pin = L.marker(ll, { draggable: true, autoPan: true,
+      icon: L.divIcon({ className: "", iconSize: [28, 28], iconAnchor: [14, 14], html: '<div class="tree-pin"></div>' }) }).addTo(this.map);
+    this.pin.on("dragend", () => { const p = this.pin.getLatLng(); this.onMove && this.onMove(p.lat, p.lng); });
+  } else this.pin.setLatLng(ll);
+  if (center) this.map.setView(ll, Math.max(this.map.getZoom(), 19));
+};
+TreeMap.prototype.refresh = function () { if (this.map) setTimeout(() => this.map.invalidateSize(), 60); };
+
+const formMap = new TreeMap("formMap", (lat, lon) => {
+  if (!draft) return;
+  draft.posManuale = { lat, lon };
+  $("#formMapHint").innerHTML = 'Posizione spostata a mano. <a href="#" id="lnkBackGps">Torna al GPS</a>';
+  $("#lnkBackGps").addEventListener("click", (e) => {
+    e.preventDefault(); draft.posManuale = null;
+    $("#formMapHint").textContent = "Se il GPS non è preciso, trascina il pallino verde sull'albero.";
+    const f = GPS.current(); if (f) formMap.set(f.lat, f.lon, true);
+  });
+});
+function formMapFollowGps(f) {
+  if (!draft || draft.posManuale || !$("#form").classList.contains("active")) return;
+  formMap.set(f.lat, f.lon, !formMap._centered);
+  formMap._centered = true;
+}
+
+/* --------------------------------------------------------- Scheda */
+async function openForm(project) {
+  if (!S.name || !S.init) { toast("Prima inserisci il nome del rilevatore e le iniziali"); openWizard(); return; }
   draft = newDraft();
   const last = (await DB.getKV("lastLavoro")) || {};
-  ["fNgs", "fNcart", "fNprog", "fSpecie", "fDiam", "fAlt", "fProb", "fNote", "fInt", "fStrum"].forEach((i) => ($("#" + i).value = ""));
+  ["fNgs", "fNcart", "fNprog", "fSpecie", "fDiam", "fAlt", "fProb", "fInt", "fStrum"].forEach((i) => ($("#" + i).value = ""));
   $("#fAllegati").value = ""; $("#allegatiInfo").textContent = "";
-  $("#fLavoro").value = last.lavoro || "";
+  $("#fLavoro").value = project || last.lavoro || "";
+  $("#formWho").textContent = `Rilevatore: ${S.name} (${S.init})`;
   draft.tipoCantiere = last.tipoCantiere || "Comune";
   draft.tipoValutazione = last.tipoValutazione || "";
   setSeg("segCantiere", draft.tipoCantiere);
   setSeg("segValutazione", draft.tipoValutazione);
-  applyCantiere(); applyValutazione();
-  await suggestProgressivo();
+  applyValutazione();
+  await applyCantiere();
   GPS.fixed = null; GPS.best = null; GPS.start();
   $("#gpsInfo").textContent = "In attesa del GPS…";
+  $("#formMapHint").textContent = "Se il GPS non è preciso, trascina il pallino verde sull'albero.";
   $("#lnkMaps").classList.add("hidden");
   $("#formErr").textContent = ""; $("#dupWarn").classList.add("hidden");
   renderThumbs();
@@ -417,13 +461,19 @@ async function openForm() {
   $("#areteBox").classList.toggle("hidden", !(S.areteOn && tpl));
   if (window.ARETE_READY) ARETE.reset($("#areteBox"), (await DB.getKV("areteRemember")) || {});
   show("form");
+  formMap._centered = false;
+  formMap.ensure(); formMap.refresh();
+  setTimeout(() => { const f = GPS.current(); if (f) { updateGpsUI(); formMapFollowGps(f); } }, 150);
+  updateNamePreview();
 }
-function applyCantiere() {
+async function applyCantiere() {
   const c = draft.tipoCantiere === "Comune";
-  $("#boxComune").classList.toggle("hidden", !c);
-  $("#boxPrivato").classList.toggle("hidden", c);
+  $("#boxGs").classList.toggle("hidden", !c);
+  $("#relReq").classList.toggle("hidden", c);
+  if (!c && !$("#fNprog").value) await suggestProgressivo();
+  updateNamePreview();
 }
-function applyValutazione() { $("#boxStrum").classList.toggle("hidden", draft.tipoValutazione !== "Strumentale"); }
+function applyValutazione() { $("#boxStrum").classList.toggle("hidden", draft.tipoValutazione !== "Strumentale"); updateNamePreview(); }
 
 async function suggestProgressivo() {
   const lav = $("#fLavoro").value.trim().toLowerCase();
@@ -453,10 +503,30 @@ function renderThumbs() {
   $("#camCount").textContent = `${draft.foto.length} foto`;
 }
 
-function idLabel(r) { return r.tipoCantiere === "Comune" ? `gs${r.ngs}` : `n${r.nprog}`; }
-function stamp(t) {
-  const d = new Date(t), p = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
+/* --------------------------------------------- Nomi dei rilievi e numeri */
+const TIPO_NOME = { "Fitostatica": "Valutazione", "Strumentale": "Strumentale", "Sorveglianza scavo": "Sorveglianza" };
+// tutti i numeri scritti nel rilievo: gs. (Greenspaces), cart. (cartellino), rel. (progressivo)
+function numeri(r) {
+  return [r.tipoCantiere === "Comune" && r.ngs ? "gs." + r.ngs : "", r.ncart ? "cart." + r.ncart : "", r.nprog ? "rel." + r.nprog : ""]
+    .filter(Boolean).map((x) => x.replace(/[^\w.]+/g, ""));
+}
+function idLabel(r) { const n = numeri(r); return n.length ? n.join(" ") : (r.cartella || "—"); }
+// "Parco Rossi – Comune X" -> "ParcoRossi-ComuneX"
+function compatto(s) {
+  return String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[–—]/g, "-")
+    .split(/[^A-Za-z0-9-]+/).filter(Boolean).map((w) => w[0].toUpperCase() + w.slice(1)).join("")
+    .replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "SenzaProgetto";
+}
+function ymd(t) { const d = new Date(t), p = (n) => String(n).padStart(2, "0"); return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}`; }
+// YYYYMMDD_Tipo_numeri_progetto_XX   es. 20261120_Valutazione_gs.4521-cart.118_ParcoRossi-ComuneX_VA
+function nomeRilievo(r) {
+  return [ymd(r.createdAt), TIPO_NOME[r.tipoValutazione] || "Rilievo", numeri(r).join("-") || "sn", compatto(r.lavoro), (r.iniziali || "XX")].join("_");
+}
+function updateNamePreview() {
+  if (!draft) return;
+  const tmp = { ...draft, lavoro: $("#fLavoro").value.trim(), ngs: $("#fNgs").value.trim(), ncart: $("#fNcart").value.trim(),
+    nprog: $("#fNprog").value.trim(), iniziali: (S.init || "XX").toUpperCase() };
+  $("#nameprev").textContent = "Nome del rilievo: " + nomeRilievo(tmp);
 }
 const safe = (s) => String(s).normalize("NFC").replace(/[\\/:*?"<>|#%]+/g, "-").replace(/\s+/g, " ").trim().slice(0, 80);
 
@@ -464,26 +534,31 @@ async function saveForm() {
   const v = (i) => $("#" + i).value.trim();
   const r = draft;
   Object.assign(r, {
-    lavoro: v("fLavoro"), ngs: v("fNgs"), ncart: v("fNcart"), nprog: v("fNprog"), specie: v("fSpecie"),
-    diametro120: v("fDiam"), altezza: v("fAlt"), problematiche: v("fProb"), note: v("fNote"), interventi: v("fInt"),
+    lavoro: v("fLavoro"), ngs: r.tipoCantiere === "Comune" ? v("fNgs") : "", ncart: v("fNcart"), nprog: v("fNprog"), specie: v("fSpecie"),
+    diametro120: v("fDiam"), altezza: v("fAlt"), problematiche: v("fProb"), note: "", interventi: v("fInt"),
     strumento: r.tipoValutazione === "Strumentale" ? v("fStrum") : "",
-    operatore: S.name, iniziali: (S.init || "XX").toUpperCase(), appVersion: CFG.appVersion,
+    operatore: S.name, iniziali: (S.init || "XX").toUpperCase(), appVersion: APP_VERSION,
   });
   const err = [];
-  if (!r.lavoro) err.push("zona/cliente");
+  if (!r.lavoro) err.push("progetto");
   if (!r.tipoValutazione) err.push("tipo di valutazione");
   if (r.tipoCantiere === "Comune" && !r.ngs) err.push("N. gs");
   if (r.tipoCantiere === "Privato" && !r.nprog) err.push("N. progressivo");
   if (!r.specie) err.push("specie");
   if (!r.diametro120) err.push("diametro");
   if (!r.altezza) err.push("altezza");
-  if (!r.problematiche) err.push("problematiche");
+  if (!r.problematiche) err.push("note di campo");
   if (!r.foto.length) err.push("almeno una foto");
   if (err.length) { $("#formErr").textContent = "Mancano: " + err.join(", "); return; }
 
   const f = GPS.current();
-  r.posizione = f ? { lat: f.lat, lon: f.lon, acc: f.acc, alt: f.alt, time: f.time, fissata: !!GPS.fixed } : null;
-  r.cartella = `${safe(idLabel(r))}_${safe(r.iniziali)}-${stamp(r.createdAt)}`;
+  const gps = f ? { lat: f.lat, lon: f.lon, acc: f.acc, alt: f.alt, time: f.time, fissata: !!GPS.fixed } : null;
+  r.posizione = r.posManuale ? { lat: r.posManuale.lat, lon: r.posManuale.lon, acc: null, manuale: true, gps } : gps;
+  // nome univoco: se esiste già lo stesso nome aggiunge -2, -3…
+  const base = nomeRilievo(r), used = new Set((await DB.all()).map((x) => x.cartella));
+  let name = base, k = 2;
+  while (used.has(name)) name = `${base}-${k++}`;
+  r.cartella = name;
   r.foto.forEach((p, i) => {
     const n = String(i + 1).padStart(2, "0");
     p.name = `foto_${n}.jpg`;
@@ -502,7 +577,7 @@ async function saveForm() {
   await DB.setKV("lastLavoro", { lavoro: r.lavoro, tipoCantiere: r.tipoCantiere, tipoValutazione: r.tipoValutazione });
   draft = null;
   GPS.fixed = null;
-  toast("Rilievo salvato sul telefono");
+  toast("Rilievo salvato: " + r.cartella, 3500);
   show("home");
   refreshCounts();
   Sync.run();
@@ -510,52 +585,57 @@ async function saveForm() {
 
 async function checkDuplicate() {
   if (!draft) return;
+  updateNamePreview();
   const lav = $("#fLavoro").value.trim().toLowerCase();
-  const key = draft.tipoCantiere === "Comune" ? $("#fNgs").value.trim() : $("#fNprog").value.trim();
-  if (!key) { $("#dupWarn").classList.add("hidden"); return; }
-  const all = await DB.all();
-  const dup = all.find((r) => (r.lavoro || "").toLowerCase() === lav && r.tipoCantiere === draft.tipoCantiere &&
-    (draft.tipoCantiere === "Comune" ? r.ngs === key : String(r.nprog) === key));
-  $("#dupWarn").textContent = dup ? "Attenzione: esiste già un rilievo con questo numero in questo cantiere." : "";
-  $("#dupWarn").classList.toggle("hidden", !dup);
+  const gs = $("#fNgs").value.trim(), cart = $("#fNcart").value.trim(), rel = $("#fNprog").value.trim();
+  const all = (await DB.all()).filter((r) => (r.lavoro || "").toLowerCase() === lav);
+  const hit = [];
+  if (draft.tipoCantiere === "Comune" && gs && all.some((r) => r.ngs === gs)) hit.push("gs." + gs);
+  if (cart && all.some((r) => r.ncart === cart)) hit.push("cart." + cart);
+  if (draft.tipoCantiere === "Privato" && rel && all.some((r) => String(r.nprog) === rel)) hit.push("rel." + rel);
+  $("#dupWarn").textContent = hit.length ? `Attenzione: in questo progetto esiste già un rilievo con ${hit.join(", ")}.` : "";
+  $("#dupWarn").classList.toggle("hidden", !hit.length);
 }
 
 /* --------------------------------------------------- Dati in uscita */
 function datiJson(r) {
   return {
-    versioneScheda: 1, app: "Rilievi in campo " + (r.appVersion || ""), creato: new Date(r.createdAt).toISOString(),
-    operatore: r.operatore, iniziali: r.iniziali, lavoro: r.lavoro, tipoCantiere: r.tipoCantiere, tipoValutazione: r.tipoValutazione,
-    identificativo: { ngs: r.ngs || null, ncart: r.ncart || null, progressivo: r.tipoCantiere === "Privato" ? Number(r.nprog) : null },
+    versioneScheda: 2, app: "Rilievi di Campo-GabTree " + (r.appVersion || ""), nome: r.cartella, creato: new Date(r.createdAt).toISOString(),
+    rilevatore: r.operatore, iniziali: r.iniziali, progetto: r.lavoro, tipo: r.tipoCantiere, tipoValutazione: r.tipoValutazione,
+    identificativo: { gs: r.ngs || null, cart: r.ncart || null, rel: r.nprog ? Number(r.nprog) : null },
     posizione: r.posizione, specie: r.specie, diametro120_cm: num(r.diametro120), altezza_m: num(r.altezza),
-    problematiche: r.problematiche, note: r.note, interventiENuovaCPC: r.interventi, strumento: r.strumento || null,
+    noteDiCampo: r.problematiche, interventiENuovaCPC: r.interventi, strumento: r.strumento || null,
     foto: r.foto.map((p) => ({ file: p.name, fileConFreccia: p.nameN, azimut: p.heading !== null ? Math.round(p.heading * 10) / 10 : null,
-      nordRiferimento: p.ref === "T" ? "geografico" : "magnetico", bussolaDaCalibrare: !!p.compassBad,
-      lat: p.lat ?? null, lon: p.lon ?? null, ora: new Date(p.time).toISOString() })),
+      nordRiferimento: "geografico", bussolaDaCalibrare: !!p.compassBad,
+      latScatto: p.lat ?? null, lonScatto: p.lon ?? null, ora: new Date(p.time).toISOString() })),
     allegati: r.allegati.map((a) => a.name),
-    schedaARETE: r.arete ? { file: r.areteXlsx ? `scheda_ARETE_${safe(idLabel(r))}.xlsx` : null, dati: r.arete } : null,
+    schedaARETE: r.arete ? { file: r.areteXlsx ? areteName(r) : null, dati: r.arete } : null,
   };
 }
+const areteName = (r) => `scheda_ARETE_${r.cartella}.xlsx`;
 const num = (s) => (s === "" || s === undefined ? null : Number(String(s).replace(",", ".")));
-const CSV_HEAD = ["Cartella", "Data", "Operatore", "Zona / cliente", "Tipo", "N. gs", "N. cart", "N. progressivo", "Tipo valutazione", "Specie",
-  "Diametro 120 cm (cm)", "Altezza (m)", "Lat", "Lon", "Precisione GPS (m)", "Problematiche", "Note", "Interventi e nuova CPC",
-  "Strumento", "N. foto", "Scheda ARETÉ", "Link Maps"];
+const CSV_HEAD = ["Nome rilievo", "Data", "Rilevatore", "Progetto", "Tipo", "N. gs", "N. cart", "N. progressivo", "Tipo valutazione", "Specie",
+  "Diametro 120 cm (cm)", "Altezza (m)", "Lat", "Lon", "Precisione GPS (m)", "Posizione corretta a mano", "Note di campo",
+  "Interventi e nuova CPC", "Strumento", "N. foto", "Scheda ARETÉ", "Link Maps"];
 function csvRow(r) {
   const p = r.posizione || {};
+  const acc = p.manuale ? (p.gps && p.gps.acc ? Math.round(p.gps.acc) : "") : p.acc ? Math.round(p.acc) : "";
   const vals = [r.cartella, new Date(r.createdAt).toLocaleString("it-IT"), r.operatore, r.lavoro, r.tipoCantiere, r.ngs, r.ncart,
-    r.tipoCantiere === "Privato" ? r.nprog : "", r.tipoValutazione, r.specie, r.diametro120, r.altezza,
-    p.lat ? p.lat.toFixed(6).replace(".", ",") : "", p.lon ? p.lon.toFixed(6).replace(".", ",") : "", p.acc ? Math.round(p.acc) : "",
-    r.problematiche, r.note, r.interventi, r.strumento, r.foto.length, r.areteXlsx ? "sì" : "",
+    r.nprog, r.tipoValutazione, r.specie, r.diametro120, r.altezza,
+    p.lat ? p.lat.toFixed(6).replace(".", ",") : "", p.lon ? p.lon.toFixed(6).replace(".", ",") : "", acc, p.manuale ? "sì" : "",
+    r.problematiche, r.interventi, r.strumento, r.foto.length, r.areteXlsx ? "sì" : "",
     p.lat ? `https://www.google.com/maps/search/?api=1&query=${p.lat},${p.lon}` : ""];
   return vals.map((x) => `"${String(x ?? "").replace(/"/g, '""').replace(/\r?\n/g, " ")}"`).join(";");
 }
-function filesOf(r) {
+function filesOf(r, onlyData) {
   const files = [{ name: "dati.json", blob: new Blob([JSON.stringify(datiJson(r), null, 2)], { type: "application/json" }) }];
+  if (onlyData) return files;
   r.foto.forEach((p) => {
     files.push({ name: p.name, blob: p.clean });
     if (p.arrow) files.push({ name: p.nameN, blob: p.arrow });
   });
   r.allegati.forEach((a) => files.push({ name: "allegato_" + safe(a.name), blob: a.blob }));
-  if (r.areteXlsx) files.push({ name: `scheda_ARETE_${safe(idLabel(r))}.xlsx`, blob: r.areteXlsx });
+  if (r.areteXlsx) files.push({ name: areteName(r), blob: r.areteXlsx });
   return files;
 }
 
@@ -758,7 +838,13 @@ async function updateRegistro(P, base, rows, interactive) {
   let text = await P.readText(path, interactive);
   if (text === null) text = "﻿" + CSV_HEAD.map((h) => `"${h}"`).join(";") + "\r\n";
   if (!text.endsWith("\n")) text += "\r\n";
-  rows.forEach((row) => { const key = row.split(";")[0]; if (!text.includes(key)) text += row + "\r\n"; });
+  // stessa pianta già presente: la riga viene sostituita (es. dopo una correzione della posizione)
+  rows.forEach((row) => {
+    const key = row.split(";")[0];
+    const lines = text.split(/\r?\n/);
+    const i = lines.findIndex((l) => l.startsWith(key + ";"));
+    if (i >= 0) { lines[i] = row; text = lines.join("\r\n"); } else text += row + "\r\n";
+  });
   await P.upload(path, new Blob([text], { type: "text/csv;charset=utf-8" }), interactive);
 }
 
@@ -777,9 +863,9 @@ const Sync = {
       try {
         setSyncInfo(`Invio ${r.cartella} su ${P.name}…`);
         const base = `${safe(S.folder || "Rilievi")}/${safe(r.lavoro)}`;
-        for (const f of filesOf(r)) await P.upload(`${base}/${r.cartella}/${f.name}`, f.blob, manual);
+        for (const f of filesOf(r, r.onlyData)) await P.upload(`${base}/${r.cartella}/${f.name}`, f.blob, manual);
         await updateRegistro(P, base, [csvRow(r)], manual);
-        r.status = "synced"; r.syncedAt = Date.now(); r.error = null; r.archivio = P.name;
+        r.status = "synced"; r.syncedAt = Date.now(); r.error = null; r.archivio = P.name; r.onlyData = false;
         ok++;
       } catch (e) {
         r.status = "error"; r.error = lastErr = String(e.message || e);
@@ -802,37 +888,80 @@ async function refreshCounts() {
   const all = await DB.all();
   $("#pendingCount").textContent = all.filter((r) => r.status !== "synced").length;
 }
+const STATO = { pending: ["in attesa", "pending"], synced: ["inviato", "synced"], error: ["errore", "error"] };
+// Progetti = rilievi raggruppati per cliente/località, come le cartelle sul cloud
 async function renderList() {
-  const all = (await DB.all()).sort((a, b) => b.createdAt - a.createdAt);
+  const all = await DB.all();
   const box = $("#listBox");
-  if (!all.length) { box.innerHTML = '<div class="muted">Nessun rilievo.</div>'; return; }
+  if (!all.length) { box.innerHTML = '<div class="muted">Nessun progetto. Il primo nasce con il primo rilievo.</div>'; return; }
+  const groups = {};
+  all.forEach((r) => { const k = r.lavoro || "(senza progetto)"; (groups[k] = groups[k] || []).push(r); });
+  const names = Object.keys(groups).sort((x, y) => Math.max(...groups[y].map((r) => r.createdAt)) - Math.max(...groups[x].map((r) => r.createdAt)));
   box.innerHTML = "";
-  all.forEach((r) => {
+  names.forEach((n) => {
+    const list = groups[n], last = Math.max(...list.map((r) => r.createdAt)), pend = list.filter((r) => r.status !== "synced").length;
+    const withFoto = list.find((r) => r.foto && r.foto[0]);
     const d = document.createElement("div");
     d.className = "item";
-    const img = r.foto[0] ? URL.createObjectURL(r.foto[0].thumb) : "";
-    const st = { pending: ["in attesa", "pending"], synced: ["inviato", "synced"], error: ["errore", "error"] }[r.status] || ["", ""];
-    d.innerHTML = `<img src="${img}"><div class="t"><b>${esc(idLabel(r))} · ${esc(r.specie)}</b>
-      <span class="muted">${esc(r.lavoro)} · ${new Date(r.createdAt).toLocaleDateString("it-IT")}</span></div>
-      <span class="badge ${st[1]}">${st[0]}</span>`;
-    d.addEventListener("click", () => openDetail(r.id));
+    d.innerHTML = `<img src="${withFoto ? URL.createObjectURL(withFoto.foto[0].thumb) : ""}"><div class="t"><b>${esc(n)}</b>
+      <span class="muted">${list.length} ${list.length === 1 ? "pianta" : "piante"} · ultimo ${new Date(last).toLocaleDateString("it-IT")}</span></div>
+      <span class="badge ${pend ? "pending" : "synced"}">${pend ? pend + " da inviare" : "inviato"}</span>`;
+    d.addEventListener("click", () => openProject(n));
     box.appendChild(d);
   });
 }
-let current = null;
+let currentProject = null;
+async function openProject(name) {
+  currentProject = name;
+  $("#prjTitle").textContent = name;
+  const list = (await DB.all()).filter((r) => (r.lavoro || "(senza progetto)") === name).sort((a, b) => b.createdAt - a.createdAt);
+  const box = $("#prjBox");
+  box.innerHTML = list.length ? "" : '<div class="muted">Nessun rilievo.</div>';
+  list.forEach((r) => {
+    const d = document.createElement("div");
+    d.className = "item";
+    const st = STATO[r.status] || ["", ""];
+    d.innerHTML = `<img src="${r.foto[0] ? URL.createObjectURL(r.foto[0].thumb) : ""}"><div class="t"><b>${esc(idLabel(r))} · ${esc(r.specie)}</b>
+      <span class="muted">${esc(r.cartella)}</span></div><span class="badge ${st[1]}">${st[0]}</span>`;
+    d.addEventListener("click", () => openDetail(r.id));
+    box.appendChild(d);
+  });
+  show("project");
+}
+
+let current = null, detPos = null;
+const detMap = new TreeMap("detMap", (lat, lon) => { detPos = { lat, lon }; $("#btnSavePos").classList.remove("hidden"); });
 async function openDetail(id) {
   current = await DB.get(id);
+  detPos = null;
+  $("#btnSavePos").classList.add("hidden");
   const r = current, p = r.posizione || {};
-  $("#detTitle").textContent = `${idLabel(r)} · ${r.tipoValutazione}`;
-  const kv = [["Zona / cliente", r.lavoro], ["Tipo", r.tipoCantiere], ["N. gs", r.ngs], ["N. cart", r.ncart],
-    ["N. progressivo", r.tipoCantiere === "Privato" ? r.nprog : ""], ["Specie", r.specie], ["Diametro 120 cm", r.diametro120 + " cm"],
-    ["Altezza", r.altezza + " m"], ["Posizione", p.lat ? `${p.lat.toFixed(6)}, ${p.lon.toFixed(6)} (±${Math.round(p.acc)} m)` : "—"],
-    ["Problematiche", r.problematiche], ["Note", r.note], ["Interventi e nuova CPC", r.interventi], ["Strumento", r.strumento],
-    ["Cartella", r.cartella], ["Stato", r.status + (r.error ? " – " + r.error : "")]];
+  $("#detTitle").textContent = `${idLabel(r)} · ${TIPO_NOME[r.tipoValutazione] || r.tipoValutazione}`;
+  const pos = p.lat ? `${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}` + (p.manuale ? " (corretta a mano)" : p.acc ? ` (±${Math.round(p.acc)} m)` : "") : "—";
+  const kv = [["Nome", r.cartella], ["Progetto", r.lavoro], ["Tipo", r.tipoCantiere], ["Numeri", numeri(r).join("  ")],
+    ["Rilevatore", r.operatore], ["Specie", r.specie], ["Diametro 120 cm", r.diametro120 + " cm"], ["Altezza", r.altezza + " m"],
+    ["Posizione", pos], ["Note di campo", r.problematiche], ["Interventi e nuova CPC", r.interventi], ["Strumento", r.strumento],
+    ["Stato", (STATO[r.status] || [r.status])[0] + (r.error ? " – " + r.error : "")]];
   $("#detKv").innerHTML = kv.filter((x) => x[1]).map(([k, v]) => `<div>${k}</div><div>${esc(v)}</div>`).join("");
   $("#detThumbs").innerHTML = r.foto.map((f) => `<div class="th"><img src="${URL.createObjectURL(f.arrow || f.clean)}">
     <div class="cap">${f.heading !== null ? Math.round(f.heading) + "° " + cardinal(f.heading) : ""}</div></div>`).join("");
   show("detail");
+  detMap.ensure(); detMap.refresh();
+  if (p.lat) setTimeout(() => detMap.set(p.lat, p.lon, true), 150);
+}
+async function saveDetailPos() {
+  if (!current || !detPos) return;
+  const old = current.posizione || {};
+  current.posizione = { lat: detPos.lat, lon: detPos.lon, acc: null, manuale: true, gps: old.manuale ? old.gps : old };
+  current.status = "pending";
+  current.onlyData = current.syncedAt ? true : false;   // già inviato: si reinviano solo dati e registro
+  await DB.put(current);
+  detPos = null;
+  $("#btnSavePos").classList.add("hidden");
+  toast("Posizione aggiornata");
+  MapView.plot(); refreshCounts();
+  openDetail(current.id);
+  Sync.run();
 }
 async function shareCurrent() {
   const files = filesOf(current).map((f) => new File([f.blob], `${current.cartella}_${f.name}`, { type: f.blob.type }));
@@ -853,7 +982,8 @@ async function deleteCurrent() {
 /* ------------------------------------------------------- Navigazione */
 function show(id) {
   $$(".screen").forEach((s) => s.classList.toggle("active", s.id === id));
-  $$("nav.tabs button").forEach((b) => b.classList.toggle("on", b.dataset.go === id));
+  const tab = id === "project" || id === "detail" ? "list" : id;
+  $$("nav.tabs button").forEach((b) => b.classList.toggle("on", b.dataset.go === tab));
   $("nav.tabs").classList.toggle("hidden", id === "camera" || id === "welcome");
   if (id === "list") renderList();
   if (id === "home") MapView.refresh();
@@ -862,7 +992,7 @@ function show(id) {
 }
 async function renderSettings() {
   $("#sFolder").value = S.folder; $("#sName").value = S.name; $("#sInit").value = S.init; $("#sDecl").value = S.decl;
-  setSeg("segNorth", S.north); setSeg("segQuality", S.quality); setSeg("segProv", S.provider);
+  setSeg("segQuality", S.quality); setSeg("segProv", S.provider);
   const A = providerAuth();
   $("#acctInfo").textContent = !A ? "Scegli dove salvare i rilievi" :
     !A.configured() ? "Manca il codice dell'app: riapri la configurazione iniziale" :
@@ -898,6 +1028,7 @@ function openWizard() {
 async function main() {
   await DB.open();
   await loadSettings();
+  S.north = "T";   // sempre nord geografico
   GAuth.load();
   const gBack = await GAuth.handleRedirect();
   if (gBack) S.provider = "google";
@@ -927,11 +1058,14 @@ async function main() {
     if (draft && draft.foto.length && !confirm("Annullare il rilievo? Le foto scattate andranno perse.")) return;
     draft = null; GPS.fixed = null; show("home");
   });
-  bindSeg("segCantiere", (v) => { draft.tipoCantiere = v; applyCantiere(); checkDuplicate(); });
+  bindSeg("segCantiere", async (v) => { draft.tipoCantiere = v; await applyCantiere(); checkDuplicate(); });
   bindSeg("segValutazione", (v) => { draft.tipoValutazione = v; applyValutazione(); });
-  $("#fLavoro").addEventListener("change", () => { suggestProgressivo(); checkDuplicate(); });
-  $("#fNgs").addEventListener("change", checkDuplicate);
-  $("#fNprog").addEventListener("change", checkDuplicate);
+  $("#fLavoro").addEventListener("change", async () => { if (draft && draft.tipoCantiere === "Privato") await suggestProgressivo(); checkDuplicate(); });
+  ["fLavoro", "fNgs", "fNcart", "fNprog"].forEach((id) => $("#" + id).addEventListener("input", updateNamePreview));
+  ["fNgs", "fNcart", "fNprog"].forEach((id) => $("#" + id).addEventListener("change", checkDuplicate));
+  $("#btnPrjBack").addEventListener("click", () => show("list"));
+  $("#btnPrjNew").addEventListener("click", () => { Compass.start(); openForm(currentProject); });
+  $("#btnSavePos").addEventListener("click", saveDetailPos);
   $("#btnGpsFix").addEventListener("click", () => {
     const f = GPS.best || GPS.last;
     if (!f) { toast("Nessuna posizione ancora"); return; }
@@ -987,7 +1121,7 @@ async function main() {
   $("#btnSave").addEventListener("click", saveForm);
 
   $("#btnSync").addEventListener("click", () => Sync.run(true));
-  $("#btnDetBack").addEventListener("click", () => show("list"));
+  $("#btnDetBack").addEventListener("click", () => (current ? openProject(current.lavoro || "(senza progetto)") : show("list")));
   $("#btnShare").addEventListener("click", shareCurrent);
   $("#btnDelete").addEventListener("click", deleteCurrent);
 
@@ -997,7 +1131,6 @@ async function main() {
   bindS("sName", "name", (x) => x.trim());
   bindS("sInit", "init", (x) => x.trim().toUpperCase());
   bindS("sDecl", "decl", (x) => Number(String(x).replace(",", ".")) || 0);
-  bindSeg("segNorth", (v) => { S.north = v; saveSettings(); });
   bindSeg("segQuality", (v) => { S.quality = Number(v); saveSettings(); });
   bindSeg("segProv", (v) => { S.provider = v; saveSettings(); renderSettings(); });
   $("#btnLogin").addEventListener("click", () => {

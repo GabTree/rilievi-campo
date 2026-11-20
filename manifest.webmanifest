@@ -1,6 +1,6 @@
 {
-  "name": "Rilievi in campo",
-  "short_name": "Rilievi",
+  "name": "Rilievi di Campo-GabTree",
+  "short_name": "RilieviCampo",
   "description": "Rilievi di alberi in campo: foto con bussola, GPS e note, salvati su OneDrive.",
   "start_url": "./index.html",
   "scope": "./",
