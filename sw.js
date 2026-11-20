@@ -1,5 +1,5 @@
 // Service worker: conserva l'app sul telefono per l'uso offline.
-const CACHE = "rilievi-v0.3.1";
+const CACHE = "rilievi-v0.4.0";
 const TILES = "rilievi-tiles";
 let trimming = false;
 async function trimTiles(c) {   // tiene al massimo ~1500 riquadri (circa 30 MB)
@@ -9,7 +9,7 @@ async function trimTiles(c) {   // tiene al massimo ~1500 riquadri (circa 30 MB)
   trimming = false;
 }
 const SHELL = ["./", "index.html", "app.js", "config.js", "manifest.webmanifest", "specie.json",
-  "vendor/msal-browser.min.js", "vendor/piexif.js", "vendor/jszip.min.js", "vendor/leaflet.js", "vendor/leaflet.css", "arete.js", "arete_lists.json", "icons/icon-192.png", "icons/icon-512.png", "icons/apple-touch-icon.png", "icons/icon-maskable-512.png"];
+  "vendor/msal-browser.min.js", "vendor/piexif.js", "vendor/jszip.min.js", "vendor/leaflet.js", "vendor/leaflet.css", "arete.js", "output.js", "vendor/docx.min.js", "vendor/qrcode.js", "brand/logo_orizzontale.png", "arete_lists.json", "icons/icon-192.png", "icons/icon-512.png", "icons/apple-touch-icon.png", "icons/icon-maskable-512.png"];
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
 });

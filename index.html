@@ -9,7 +9,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="RilieviCampo">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="stylesheet" href="vendor/leaflet.css?v=0.3.1">
+<link rel="stylesheet" href="vendor/leaflet.css?v=0.4.0">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="icon" href="icons/icon-192.png">
 <title>Rilievi di Campo-GabTree</title>
@@ -71,6 +71,12 @@
     border-radius: 12px; padding: 10px 12px; font-size: 13px; white-space: pre-wrap; }
   .minimap { height: 220px; border-radius: 12px; margin: 8px 0 6px; background: #e6ebe7; }
   .hdr-logo { width: 44px; height: 44px; border-radius: 11px; box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+  .counters { display: grid; grid-template-columns: repeat(4, 1fr); text-align: center; gap: 4px; padding: 10px 6px; }
+  .counters b { display: block; font-size: 26px; color: var(--verde); font-variant-numeric: tabular-nums; }
+  .counters span { font-size: 12px; color: var(--grigio); }
+  .outchk label { display: flex; align-items: center; gap: 10px; padding: 8px 0; font-size: 16px; border-bottom: 1px solid #eee; }
+  .outchk input { width: 22px; height: 22px; flex: 0 0 auto; }
+  .outchk small { display: block; color: var(--grigio); font-size: 13px; }
   .brand { display: block; font-size: 13px; letter-spacing: .08em; color: var(--verde-2); font-weight: 800; }
   .tree-pin { width: 22px; height: 22px; border-radius: 50%; background: #2e7d32; border: 3px solid #fff; box-shadow: 0 0 5px rgba(0,0,0,.5); }
   .mapbtn.follow { background: var(--verde); color: #fff; }
@@ -185,6 +191,10 @@
       <button class="iconbtn" id="btnCompass" style="margin-top:8px">Attiva bussola</button>
     </div>
   </div>
+  <div class="card counters">
+    <div><b id="cntTot">0</b><span>totale</span></div><div><b id="cntW">0</b><span>7 giorni</span></div>
+    <div><b id="cntM">0</b><span>30 giorni</span></div><div><b id="cntY">0</b><span>12 mesi</span></div>
+  </div>
   <button class="big" id="btnNew">+ Nuovo rilievo</button>
   <div class="card" style="margin-top:12px">
     <div class="row" style="align-items:center">
@@ -201,21 +211,22 @@
   <div class="muted" id="formWho" style="margin:-4px 0 10px"></div>
 
   <div class="card">
+    <label class="f">Data della valutazione</label>
+    <input type="date" id="fData">
     <label class="f">Progetto (cliente / località) <span class="req">*</span></label>
     <input type="text" id="fLavoro" list="lavoriList" placeholder="es. Parco Rossi – Comune X" autocomplete="off">
     <datalist id="lavoriList"></datalist>
-    <label class="f">Tipo</label>
-    <div class="seg" id="segCantiere"><button data-v="Comune">Comune</button><button data-v="Privato">Privato</button></div>
-    <label class="f">Tipo di valutazione <span class="req">*</span></label>
-    <div class="seg" id="segValutazione"><button data-v="Fitostatica">Fitostatica</button><button data-v="Strumentale">Strumentale</button><button data-v="Sorveglianza scavo">Sorveglianza scavo</button></div>
+    <label class="f">Tipo di rilievo</label>
+    <div class="seg" id="segValutazione"><button data-v="Valutazione">Valutazione</button><button data-v="Sorveglianza scavo">Sorveglianza scavo</button></div>
   </div>
 
   <div class="card">
     <div class="row">
-      <div id="boxGs"><label class="f">N. gs <span class="req">*</span></label><input type="text" inputmode="numeric" id="fNgs"></div>
+      <div><label class="f">N. gs</label><input type="text" inputmode="numeric" id="fNgs"></div>
       <div><label class="f">N. cart</label><input type="text" inputmode="numeric" id="fNcart"></div>
-      <div><label class="f">N. progr. <span class="req" id="relReq">*</span></label><input type="number" inputmode="numeric" id="fNprog"></div>
+      <div><label class="f">N. progr.</label><input type="number" inputmode="numeric" id="fNprog"></div>
     </div>
+    <div class="muted" style="margin-top:6px">Serve almeno un numero. <a href="#" id="lnkProg"></a></div>
     <div class="muted" id="nameprev" style="margin-top:8px"></div>
     <div class="muted warn hidden" id="dupWarn" style="margin-top:6px"></div>
   </div>
@@ -232,7 +243,7 @@
   </div>
 
   <div class="card">
-    <label class="f">Foto <span class="req">*</span></label>
+    <label class="f">Foto</label>
     <div class="row">
       <button class="big" id="btnCamera">Fotocamera</button>
       <button class="big sec" id="btnSysCam" style="flex:0 0 38%">Foto di sistema</button>
@@ -242,26 +253,31 @@
   </div>
 
   <div class="card">
-    <label class="f">Specie <span class="req">*</span></label>
+    <label class="f">Specie</label>
     <input type="text" id="fSpecie" list="specieList" autocomplete="off" placeholder="Scrivi per cercare">
     <datalist id="specieList"></datalist>
     <div class="row">
-      <div><label class="f">Diametro a 120 cm (cm) <span class="req">*</span></label><input type="number" inputmode="decimal" id="fDiam"></div>
-      <div><label class="f">Altezza (m) <span class="req">*</span></label><input type="number" inputmode="decimal" id="fAlt"></div>
+      <div><label class="f">Diametro a 120 cm (cm)</label><input type="number" inputmode="decimal" id="fDiam"></div>
+      <div><label class="f">Altezza (m)</label><input type="number" inputmode="decimal" id="fAlt"></div>
     </div>
-    <label class="f">Note di campo <span class="req">*</span></label>
+    <label class="f">Note di campo</label>
     <textarea id="fProb" placeholder="Descrizione libera (puoi usare la dettatura della tastiera)"></textarea>
     <label class="f">Interventi e nuova CPC</label>
     <textarea id="fInt"></textarea>
   </div>
 
   <div class="card hidden" id="boxStrum">
-    <label class="f">Strumento usato</label>
-    <input type="text" id="fStrum" list="strumList" autocomplete="off">
+    <label class="f chk"><input type="checkbox" id="fStrumOn"> Indagine strumentale</label>
+    <div id="strumFields" class="hidden">
+    <label class="f">Tipo di strumentale</label>
+    <input type="text" id="fStrum" list="strumList" autocomplete="off" placeholder="es. resistografo">
     <datalist id="strumList"><option value="Resistografo"><option value="Tomografo sonico"><option value="Pulling test"></datalist>
+    <label class="f">Esito della prova (rischio)</label>
+    <div class="seg" id="segEsito"><button data-v="Basso">Basso</button><button data-v="Medio">Medio</button><button data-v="Alto">Alto</button></div>
     <label class="f">Allegati (grafici o file dello strumento)</label>
     <input type="file" id="fAllegati" multiple>
     <div class="muted" id="allegatiInfo"></div>
+    </div>
   </div>
 
   <div class="card" id="cardArete">
@@ -303,6 +319,12 @@
   <header class="bar"><button class="iconbtn" id="btnPrjBack">‹ Progetti</button><h1 id="prjTitle">Progetto</h1></header>
   <button class="big" id="btnPrjNew">+ Nuovo rilievo in questo progetto</button>
   <div class="card" id="prjBox" style="margin-top:12px"></div>
+  <div class="card">
+    <label class="f">File del progetto nel cloud</label>
+    <div class="outchk" id="prjOut"></div>
+    <button class="big sec" id="btnPrjExport" style="margin-top:8px">Crea / aggiorna i file scelti</button>
+    <div class="muted" id="prjExportInfo" style="margin-top:6px"></div>
+  </div>
 </section>
 
 <!-- DETTAGLIO -->
@@ -328,6 +350,8 @@
     <div class="seg" id="segProv"><button data-v="onedrive">OneDrive</button><button data-v="google">Google Drive</button></div>
     <div id="acctInfo" class="muted" style="margin-top:8px">Non collegato</div>
     <div class="row" style="margin-top:8px"><button class="big" id="btnLogin">Collega</button><button class="big sec hidden" id="btnLogout">Scollega</button></div>
+    <label class="f">Cosa salvare per ogni progetto</label>
+    <div class="outchk" id="setOut"></div>
     <label class="f">Nome della cartella</label>
     <input type="text" id="sFolder" placeholder="Rilievi">
   </div>
@@ -336,6 +360,11 @@
     <div id="areteTplInfo" class="muted">Nessun modello caricato</div>
     <div class="muted">Carica il file <b>Scheda_ARETE_ORD_telefono.xlsx</b> (puoi sceglierlo da OneDrive o Google Drive). Si carica una volta sola.</div>
     <input type="file" id="sAreteTpl" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style="margin-top:8px">
+  </div>
+  <div class="card">
+    <label class="f">Per il piè di pagina delle schede</label>
+    <input type="text" id="sStudio" placeholder="Nome dello studio">
+    <input type="text" id="sQual" placeholder="es. Dott. Agr. Nome Cognome – Ordine di Roma n. 000" style="margin-top:8px">
   </div>
   <div class="card">
     <label class="f">Nome del rilevatore</label><input type="text" id="sName">
@@ -359,12 +388,15 @@
 <div class="toast" id="toast"></div>
 <div id="errBanner" class="hidden"></div>
 
-<script src="config.js?v=0.3.1"></script>
-<script src="vendor/msal-browser.min.js?v=0.3.1"></script>
-<script src="vendor/piexif.js?v=0.3.1"></script>
-<script src="vendor/jszip.min.js?v=0.3.1"></script>
-<script src="vendor/leaflet.js?v=0.3.1"></script>
-<script src="arete.js?v=0.3.1"></script>
-<script src="app.js?v=0.3.1"></script>
+<script src="config.js?v=0.4.0"></script>
+<script src="vendor/msal-browser.min.js?v=0.4.0"></script>
+<script src="vendor/piexif.js?v=0.4.0"></script>
+<script src="vendor/jszip.min.js?v=0.4.0"></script>
+<script src="vendor/docx.min.js?v=0.4.0"></script>
+<script src="vendor/qrcode.js?v=0.4.0"></script>
+<script src="vendor/leaflet.js?v=0.4.0"></script>
+<script src="arete.js?v=0.4.0"></script>
+<script src="output.js?v=0.4.0"></script>
+<script src="app.js?v=0.4.0"></script>
 </body>
 </html>

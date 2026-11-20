@@ -269,10 +269,10 @@ const ARETE = (() => {
     const doc = new DOMParser().parseFromString(await zip.file(path).async("string"), "application/xml");
     const S = (ref, v, k) => setCell(doc, ref, v, k);
 
-    S("H6", excelDate(r.createdAt), "n");
+    S("H6", r.dataValutazione ? excelDate(r.dataValutazione + "T12:00:00") : excelDate(r.createdAt), "n");
     if (r.operatore) S("D6", r.operatore, "s");   // rilevatore = chi compila (altrimenti resta l'utente registrato del modello)
     S("J6", r.specie, "s");
-    S("U6", asNum(r.tipoCantiere === "Comune" ? r.ngs || r.nprog : r.nprog || r.ncart));
+    S("U6", asNum(r.ngs || r.nprog || r.ncart));
     S("C9", asNum(r.altezza));
     S("E9", asNum(r.diametro120));
     GEN.forEach((f) => S(f.cell, a[f.k], "s"));

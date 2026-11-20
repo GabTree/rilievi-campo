@@ -1,0 +1,307 @@
+/* File in uscita per ogni progetto:
+ *  Schede/   scheda di valutazione Word di ogni pianta (+ scheda ARETÉ se compilata)
+ *  Foto/     foto di tutte le piante, nominate e in ordine
+ *  Riepilogo_<progetto>.xlsx / .csv   tabella con tutte le piante (una riga per pianta)
+ *  Mappa/    <progetto>.geojson + .qml (QGIS) e <progetto>.kml (Google Earth), pallini verdi con gli attributi
+ */
+"use strict";
+
+const OUT = (() => {
+  const VERDE = "2E5E3E", VERDE_CHIARO = "F1F6F2", GRIGIO = "6B6B6B", LINEA = "D0D5D1", ETICH = "F3F4F2", FONT = "Calibri", W = 9638;
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" }[c]));
+  const dash = (v) => (v === undefined || v === null || String(v).trim() === "" ? "—" : String(v));
+  const itDate = (iso) => { if (!iso) return "—"; const [y, m, d] = iso.split("-"); return `${d}/${m}/${y}`; };
+  const mapsUrl = (p) => `https://www.google.com/maps/search/?api=1&query=${p.lat.toFixed(6)},${p.lon.toFixed(6)}`;
+  const tipoTitolo = (r) => (r.tipoValutazione === "Sorveglianza scavo" ? "SORVEGLIANZA SCAVO" : "VALUTAZIONE FITOSTATICA");
+
+  /* ---------------------------------------------------------- immagini */
+  async function dims(blob) { const b = await createImageBitmap(blob); const d = { w: b.width, h: b.height }; b.close && b.close(); return d; }
+  const buf = (blob) => blob.arrayBuffer();
+  function canvasBlob(c, type = "image/png") { return new Promise((ok) => c.toBlob(ok, type, 0.9)); }
+
+  async function logo() {
+    if (!logo.b) logo.b = await (await fetch("brand/logo_orizzontale.png")).blob();
+    return logo.b;
+  }
+
+  // estratto di mappa da OpenStreetMap con il pallino verde della pianta (serve la rete)
+  async function staticMap(lat, lon, z = 18, W0 = 760, H0 = 520) {
+    const n = 2 ** z, x = ((lon + 180) / 360) * n;
+    const y = ((1 - Math.log(Math.tan((lat * Math.PI) / 180) + 1 / Math.cos((lat * Math.PI) / 180)) / Math.PI) / 2) * n;
+    const c = document.createElement("canvas"); c.width = W0; c.height = H0;
+    const g = c.getContext("2d");
+    g.fillStyle = "#e9eee8"; g.fillRect(0, 0, W0, H0);
+    const x0 = x * 256 - W0 / 2, y0 = y * 256 - H0 / 2;
+    const jobs = [];
+    for (let tx = Math.floor(x0 / 256); tx <= Math.floor((x0 + W0) / 256); tx++)
+      for (let ty = Math.floor(y0 / 256); ty <= Math.floor((y0 + H0) / 256); ty++)
+        jobs.push(fetch(`https://tile.openstreetmap.org/${z}/${tx}/${ty}.png`, { mode: "cors" })
+          .then((r) => (r.ok ? r.blob() : null)).then((b) => (b ? createImageBitmap(b) : null))
+          .then((bmp) => { if (bmp) g.drawImage(bmp, tx * 256 - x0, ty * 256 - y0); }).catch(() => {}));
+    await Promise.all(jobs);
+    g.beginPath(); g.arc(W0 / 2, H0 / 2, 13, 0, Math.PI * 2); g.fillStyle = "#2e7d32"; g.fill();
+    g.lineWidth = 5; g.strokeStyle = "#fff"; g.stroke();
+    g.font = "15px Arial"; g.fillStyle = "rgba(255,255,255,.85)"; g.fillRect(W0 - 140, H0 - 24, 140, 24);
+    g.fillStyle = "#333"; g.fillText("© OpenStreetMap", W0 - 128, H0 - 7);
+    return canvasBlob(c);
+  }
+
+  function qrBlob(text) {
+    const q = qrcode(0, "M"); q.addData(text); q.make();
+    const n = q.getModuleCount(), s = 8, m = 2, c = document.createElement("canvas");
+    c.width = c.height = (n + 2 * m) * s;
+    const g = c.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height); g.fillStyle = "#000";
+    for (let r = 0; r < n; r++) for (let k = 0; k < n; k++) if (q.isDark(r, k)) g.fillRect((k + m) * s, (r + m) * s, s, s);
+    return canvasBlob(c);
+  }
+
+  /* ---------------------------------------------- scheda di valutazione Word */
+  async function schedaDocx(r, opts = {}) {
+    const D = window.docx;
+    const { Document, Packer, Paragraph, TextRun, ImageRun, Table, TableRow, TableCell, WidthType, BorderStyle, ShadingType,
+      AlignmentType, VerticalAlign, Header, Footer, PageNumber, TabStopType, ExternalHyperlink, TableLayoutType } = D;
+    const none = { style: BorderStyle.NONE, size: 0, color: "FFFFFF" };
+    const noB = { top: none, bottom: none, left: none, right: none };
+    const thin = (c = LINEA) => ({ style: BorderStyle.SINGLE, size: 4, color: c });
+    const tblNoB = { top: none, bottom: none, left: none, right: none, insideHorizontal: none, insideVertical: none };
+    const run = (t, o = {}) => new TextRun({ text: String(t), font: FONT, size: o.size || 21, bold: o.bold, italics: o.italics, color: o.color || "1D1D1B" });
+    const P = (t, o = {}) => new Paragraph({ children: Array.isArray(t) ? t : [run(t, o)], alignment: o.align,
+      spacing: { before: o.before || 0, after: o.after ?? 60, line: o.line || 264 }, keepNext: o.keepNext, keepLines: true });
+    const cell = (ch, w, o = {}) => new TableCell({ children: Array.isArray(ch) ? ch : [ch], width: { size: w, type: WidthType.DXA },
+      shading: o.fill ? { fill: o.fill, type: ShadingType.CLEAR, color: "auto" } : undefined,
+      borders: o.borders || { top: none, left: none, right: none, bottom: thin() },
+      margins: { top: o.mt ?? 70, bottom: o.mb ?? 70, left: o.ml ?? 110, right: o.mr ?? 110 }, verticalAlign: o.v || VerticalAlign.CENTER });
+    const heading = (n, t) => new Paragraph({ children: [new TextRun({ text: `${n}. ${t.toUpperCase()}`, font: FONT, size: 22, bold: true, color: VERDE, characterSpacing: 20 })],
+      spacing: { before: 300, after: 120 }, keepNext: true, border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: VERDE, space: 3 } } });
+    const kv = (rows) => {
+      const c1 = 3300, c2 = W - c1;
+      return new Table({ width: { size: W, type: WidthType.DXA }, columnWidths: [c1, c2], layout: TableLayoutType.FIXED,
+        borders: { top: thin(), bottom: none, left: none, right: none, insideHorizontal: none, insideVertical: none },
+        rows: rows.map(([k, v], i) => new TableRow({ cantSplit: true, children: [
+          cell(P(k, { bold: true, after: 0, keepNext: i < rows.length - 1 }), c1, { fill: ETICH }),
+          cell(Array.isArray(v) ? v : P(dash(v), { after: 0, keepNext: i < rows.length - 1 }), c2)] })) });
+    };
+    const img = async (blob, w, type) => { const d = await dims(blob); return new ImageRun({ data: await buf(blob), type, transformation: { width: w, height: Math.round((w * d.h) / d.w) } }); };
+    const caption = (t) => P(t, { size: 18, color: GRIGIO, after: 0, before: 60 });
+    const pos = r.posizione && r.posizione.lat ? r.posizione : null;
+    const data = itDate(r.dataValutazione);
+    const fotoBlob = (f) => f.arrow || f.clean;
+    const dirTxt = (f) => (f.heading !== null && f.heading !== undefined ? `direzione dello scatto ${Math.round(f.heading)}° ${cardinal(f.heading)}` : "");
+    const capTxt = (i, f, def) => [`Fig. ${i}`, def, dirTxt(f), itDate(r.dataValutazione)].filter(Boolean).join(" · ");
+    const nums = numeri(r).join(" · ") || "—";
+    const strum = r.strumOn ? `${dash(r.strumento)}${r.esitoProva ? " – esito: rischio " + r.esitoProva.toLowerCase() : ""}` : "—";
+
+    // intestazione e piè di pagina
+    const lg = await logo();
+    const header = new Header({ children: [
+      new Table({ width: { size: W, type: WidthType.DXA }, columnWidths: [4300, W - 4300], layout: TableLayoutType.FIXED, borders: tblNoB,
+        rows: [new TableRow({ children: [
+          cell(new Paragraph({ children: [await img(lg, 190, "png")] }), 4300, { borders: noB, ml: 0, mt: 0, mb: 0 }),
+          cell([P([run(tipoTitolo(r), { size: 30, bold: true, color: VERDE })], { align: AlignmentType.RIGHT, after: 20 }),
+            P("Scheda di rilievo arboreo", { size: 19, color: GRIGIO, align: AlignmentType.RIGHT, after: 20 }),
+            P("Rif. " + r.cartella, { size: 15, color: GRIGIO, align: AlignmentType.RIGHT, after: 0 })], W - 4300, { borders: noB, mr: 0, mt: 0, mb: 0 })] })] }),
+      new Paragraph({ children: [], spacing: { before: 60, after: 0 }, border: { bottom: { style: BorderStyle.SINGLE, size: 12, color: VERDE, space: 1 } } }),
+    ] });
+    const studio = [S.studio, S.qualifica].filter(Boolean).join(" · ") || r.operatore || "";
+    const footer = new Footer({ children: [
+      new Paragraph({ border: { top: { style: BorderStyle.SINGLE, size: 4, color: LINEA, space: 4 } }, tabStops: [{ type: TabStopType.RIGHT, position: W }], spacing: { after: 20 },
+        children: [run(studio, { size: 16, color: GRIGIO }), new TextRun({ text: "\tPagina ", font: FONT, size: 16, color: GRIGIO }),
+          new TextRun({ children: [PageNumber.CURRENT], font: FONT, size: 16, color: GRIGIO }), new TextRun({ text: " di ", font: FONT, size: 16, color: GRIGIO }),
+          new TextRun({ children: [PageNumber.TOTAL_PAGES], font: FONT, size: 16, color: GRIGIO })] }),
+      P(`Documento emesso il ${new Date().toLocaleDateString("it-IT")} · Rilievo eseguito con GabTree Rilievi di Campo`, { size: 15, color: GRIGIO, after: 0 }),
+    ] });
+
+    // riquadro dell'esito
+    const q = W / 4;
+    const bb = (p) => ({ top: p.t ? thin(VERDE) : none, bottom: p.b ? thin(VERDE) : none, left: p.l ? thin(VERDE) : none, right: p.r ? thin(VERDE) : none });
+    const sumRow = (items, t, b) => new TableRow({ cantSplit: true, children: items.map(([l, v], i) => cell([
+      P(l.toUpperCase(), { size: 15, bold: true, color: VERDE, after: 20 }), P(dash(v), { bold: true, after: 0 })], q,
+      { fill: VERDE_CHIARO, borders: bb({ t, b, l: i === 0, r: i === items.length - 1 }), mt: t ? 120 : 60, mb: b ? 120 : 60, v: VerticalAlign.TOP })) });
+    const esito = new Table({ width: { size: W, type: WidthType.DXA }, columnWidths: [q, q, q, q], layout: TableLayoutType.FIXED, rows: [
+      sumRow([["Data della valutazione", data], ["Pianta", nums], ["Specie", r.specie], ["Tipo di rilievo", r.tipoValutazione === "Sorveglianza scavo" ? "Sorveglianza scavo" : "Valutazione fitostatica"]], true, false),
+      sumRow([["Indagine strumentale", r.strumOn ? (r.esitoProva ? "Rischio " + r.esitoProva.toLowerCase() : "eseguita") : "—"], ["Diametro / altezza", [r.diametro120 && r.diametro120 + " cm", r.altezza && r.altezza + " m"].filter(Boolean).join(" · ")],
+        ["Interventi e nuova CPC", (r.interventi || "").slice(0, 90)], ["Rilevatore", r.operatore]], false, true),
+    ] });
+
+    // foto generale + mappa + QR
+    const children = [esito, P("", { after: 120 })];
+    const f1 = r.foto[0];
+    const left = f1 ? [new Paragraph({ children: [await img(fotoBlob(f1), 250, "jpg")] }), caption(capTxt(1, f1, "Vista generale"))] : [P("Nessuna foto", { color: GRIGIO })];
+    let right = [P("Posizione non disponibile", { color: GRIGIO })];
+    if (pos) {
+      right = [];
+      try { if (navigator.onLine) right.push(new Paragraph({ children: [await img(await staticMap(pos.lat, pos.lon), 250, "png")] }), caption("Estratto di mappa – posizione della pianta (© OpenStreetMap)")); } catch (e) { /* offline */ }
+      right.push(new Paragraph({ children: [await img(await qrBlob(mapsUrl(pos)), 92, "png")], spacing: { before: 200, after: 0 } }), caption("Inquadra il codice per aprire la posizione in Google Maps"));
+    }
+    children.push(new Table({ width: { size: W, type: WidthType.DXA }, columnWidths: [4819, 4819], layout: TableLayoutType.FIXED, borders: tblNoB,
+      rows: [new TableRow({ cantSplit: true, children: [cell(left, 4819, { borders: noB, ml: 0, v: VerticalAlign.TOP }), cell(right, 4819, { borders: noB, v: VerticalAlign.TOP })] })] }));
+
+    const coord = pos ? [new Paragraph({ spacing: { after: 0 }, children: [
+      run(`${pos.lat.toFixed(6)}, ${pos.lon.toFixed(6)} (WGS84${pos.manuale ? ", posizione corretta a mano" : pos.acc ? ", ± " + Math.round(pos.acc) + " m" : ""}) · `),
+      new ExternalHyperlink({ link: mapsUrl(pos), children: [new TextRun({ text: "apri in Google Maps", font: FONT, size: 21, color: "1A5FB4", underline: {} })] })] })] : "—";
+    children.push(heading(1, "Dati generali"), kv([["Data della valutazione", data], ["Rilevatore", r.operatore], ["Progetto / committente", r.lavoro], ["Coordinate", coord]]));
+    children.push(heading(2, "Esemplare"), kv([["N. Greenspaces (gs.)", r.ngs], ["N. cartellino (cart.)", r.ncart], ["N. progressivo (rel.)", r.nprog],
+      ["Specie", r.specie], ["Diametro a 120 cm", r.diametro120 ? r.diametro120 + " cm" : ""], ["Altezza", r.altezza ? r.altezza + " m" : ""]]));
+    const val = [["Tipo di rilievo", r.tipoValutazione === "Sorveglianza scavo" ? "Sorveglianza scavo" : "Valutazione fitostatica"], ["Note di campo", r.problematiche]];
+    if (r.tipoValutazione !== "Sorveglianza scavo") val.push(["Indagine strumentale", strum]);
+    val.push(["Interventi e nuova CPC", r.interventi]);
+    children.push(heading(3, "Valutazione"), kv(val));
+
+    // documentazione fotografica: 2 per riga
+    if (r.foto.length > 1) {
+      children.push(heading(4, "Documentazione fotografica"));
+      const rest = r.foto.slice(1), rows = [];
+      for (let i = 0; i < rest.length; i += 2) {
+        const pair = rest.slice(i, i + 2);
+        const cells = [];
+        for (let k = 0; k < 2; k++) {
+          const f = pair[k];
+          cells.push(cell(f ? [new Paragraph({ children: [await img(fotoBlob(f), 290, "jpg")], alignment: AlignmentType.CENTER }), caption(capTxt(i + k + 2, f, ""))] : [P("")],
+            4819, { borders: noB, v: VerticalAlign.TOP, mb: 200 }));
+        }
+        rows.push(new TableRow({ cantSplit: true, children: cells }));
+      }
+      children.push(new Table({ width: { size: W, type: WidthType.DXA }, columnWidths: [4819, 4819], layout: TableLayoutType.FIXED, borders: tblNoB, rows }));
+    }
+    children.push(heading(r.foto.length > 1 ? 5 : 4, "Note metodologiche"),
+      P((r.tipoValutazione === "Sorveglianza scavo"
+        ? "Sorveglianza eseguita durante i lavori di scavo in prossimità dell'esemplare. "
+        : "La valutazione è stata eseguita con metodo visivo (VTA – Visual Tree Assessment)" + (r.strumOn ? " e con indagine strumentale" : "") + ". ") +
+        "I risultati si riferiscono alle condizioni dell'esemplare rilevate alla data del sopralluogo e possono variare per eventi meteorici, interventi o evoluzione di patologie.",
+        { line: 276, after: 360 }));
+    children.push(new Table({ width: { size: W, type: WidthType.DXA }, columnWidths: [4819, 4819], layout: TableLayoutType.FIXED, borders: tblNoB,
+      rows: [new TableRow({ cantSplit: true, children: [
+        cell([P("Luogo e data", { bold: true }), P(data)], 4819, { borders: noB, ml: 0, v: VerticalAlign.TOP }),
+        cell([P("Il tecnico", { bold: true, align: AlignmentType.RIGHT }), P(S.qualifica || r.operatore || "", { align: AlignmentType.RIGHT }),
+          new Paragraph({ children: [], spacing: { before: 700, after: 0 }, border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: "8A8A8A", space: 1 } } }),
+          P("(firma e timbro)", { size: 17, color: GRIGIO, align: AlignmentType.RIGHT })], 4819, { borders: noB, mr: 0, v: VerticalAlign.TOP })] })] }));
+
+    const doc = new Document({ creator: "GabTree Rilievi di Campo", title: r.cartella, styles: { default: { document: { run: { font: FONT, size: 21 } } } },
+      sections: [{ properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: 1900, right: 1134, bottom: 1300, left: 1134, header: 600, footer: 560 } } },
+        headers: { default: header }, footers: { default: footer }, children }] });
+    return Packer.toBlob(doc);
+  }
+
+  /* ------------------------------------------------------ riepilogo */
+  const COLS = [
+    ["N.", 5], ["Nome rilievo", 44], ["Data valutazione", 12], ["Tipo di rilievo", 18], ["N. gs", 9], ["N. cart", 9], ["N. progr.", 9],
+    ["Specie", 28], ["Diametro 120 cm (cm)", 11], ["Altezza (m)", 9], ["Note di campo", 40], ["Interventi e nuova CPC", 34],
+    ["Tipo di strumentale", 16], ["Esito prova", 10], ["Lat", 11], ["Lon", 11], ["Posizione corretta a mano", 10], ["N. foto", 7],
+    ["Rilevatore", 18], ["Maps", 40],
+  ];
+  function rowOf(r, i) {
+    const p = r.posizione || {};
+    return [i + 1, r.cartella, itDate(r.dataValutazione), r.tipoValutazione === "Sorveglianza scavo" ? "Sorveglianza scavo" : "Valutazione",
+      r.ngs || "", r.ncart || "", r.nprog ? Number(r.nprog) : "", r.specie || "", num(r.diametro120) ?? "", num(r.altezza) ?? "",
+      r.problematiche || "", r.interventi || "", r.strumOn ? r.strumento || "" : "", r.strumOn ? r.esitoProva || "" : "",
+      p.lat ? Number(p.lat.toFixed(6)) : "", p.lon ? Number(p.lon.toFixed(6)) : "", p.manuale ? "sì" : "", r.foto.length, r.operatore || "",
+      p.lat ? mapsUrl(p) : ""];
+  }
+  function csv(list) {
+    const lines = [COLS.map((c) => c[0]), ...list.map(rowOf)].map((row) =>
+      row.map((x) => { const s = typeof x === "number" ? String(x).replace(".", ",") : String(x ?? ""); return `"${s.replace(/"/g, '""').replace(/\r?\n/g, " ")}"`; }).join(";"));
+    return new Blob(["﻿" + lines.join("\r\n") + "\r\n"], { type: "text/csv;charset=utf-8" });
+  }
+  // file Excel minimo, scritto a mano: intestazione verde, filtri, riga bloccata, stampa su una pagina in orizzontale
+  async function xlsx(list, title) {
+    const colL = (i) => { let s = ""; i++; while (i) { const m = (i - 1) % 26; s = String.fromCharCode(65 + m) + s; i = Math.floor((i - 1) / 26); } return s; };
+    const cellX = (ref, v, st) => {
+      if (v === "" || v === null || v === undefined) return st ? `<c r="${ref}" s="${st}"/>` : "";
+      if (typeof v === "number") return `<c r="${ref}" s="${st || 0}"><v>${v}</v></c>`;
+      return `<c r="${ref}" s="${st || 2}" t="inlineStr"><is><t xml:space="preserve">${esc(v)}</t></is></c>`;
+    };
+    const rows = [`<row r="1">${COLS.map((c, i) => cellX(colL(i) + 1, c[0], 1)).join("")}</row>`];
+    list.forEach((r, k) => {
+      const vals = rowOf(r, k), rn = k + 2;
+      rows.push(`<row r="${rn}">${vals.map((v, i) => cellX(colL(i) + rn, v, typeof v === "number" ? (i === 14 || i === 15 ? 3 : 4) : 2)).join("")}</row>`);
+    });
+    const last = colL(COLS.length - 1) + (list.length + 1);
+    const sheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><dimension ref="A1:${last}"/>
+<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>
+<sheetFormatPr defaultRowHeight="15"/>
+<cols>${COLS.map((c, i) => `<col min="${i + 1}" max="${i + 1}" width="${c[1]}" customWidth="1"/>`).join("")}</cols>
+<sheetData>${rows.join("")}</sheetData>
+<autoFilter ref="A1:${last}"/>
+<pageMargins left="0.4" right="0.4" top="0.6" bottom="0.6" header="0.3" footer="0.3"/>
+<pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="0"/>
+<headerFooter><oddHeader>&amp;L&amp;B${esc(title)}&amp;RGabTree Rilievi di Campo</oddHeader><oddFooter>&amp;RPagina &amp;P di &amp;N</oddFooter></headerFooter>
+</worksheet>`;
+    const styles = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+<numFmts count="1"><numFmt numFmtId="164" formatCode="0.000000"/></numFmts>
+<fonts count="2"><font><sz val="10"/><name val="Calibri"/></font><font><b/><sz val="10"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font></fonts>
+<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF2E5E3E"/><bgColor indexed="64"/></patternFill></fill></fills>
+<borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border><left/><right/><top/><bottom style="thin"><color rgb="FFD0D5D1"/></bottom><diagonal/></border></borders>
+<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+<cellXfs count="5"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment wrapText="1" vertical="center"/></xf>
+<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment wrapText="1" vertical="top"/></xf>
+<xf numFmtId="164" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1" applyAlignment="1"><alignment vertical="top"/></xf>
+<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="top"/></xf></cellXfs>
+<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
+    const z = new JSZip();
+    z.file("[Content_Types].xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>`);
+    z.file("_rels/.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`);
+    z.file("xl/workbook.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Piante" sheetId="1" r:id="rId1"/></sheets><definedNames><definedName name="_xlnm._FilterDatabase" localSheetId="0" hidden="1">Piante!$A$1:$${last.replace(/\d+$/, "")}$${list.length + 1}</definedName><definedName name="_xlnm.Print_Titles" localSheetId="0">Piante!$1:$1</definedName></definedNames></workbook>`);
+    z.file("xl/_rels/workbook.xml.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`);
+    z.file("xl/worksheets/sheet1.xml", sheet);
+    z.file("xl/styles.xml", styles);
+    return z.generateAsync({ type: "blob", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  }
+
+  /* ------------------------------------------------------ vettoriale */
+  function attrs(r, i) {
+    const v = rowOf(r, i), o = {};
+    COLS.forEach((c, k) => { if (k !== 14 && k !== 15) o[c[0]] = v[k] === "" ? null : v[k]; });
+    return o;
+  }
+  function geojson(list) {
+    const fc = { type: "FeatureCollection", name: "piante",
+      crs: { type: "name", properties: { name: "urn:ogc:def:crs:OGC:1.3:CRS84" } },
+      features: list.filter((r) => r.posizione && r.posizione.lat).map((r, i) => ({ type: "Feature",
+        geometry: { type: "Point", coordinates: [Number(r.posizione.lon.toFixed(7)), Number(r.posizione.lat.toFixed(7))] }, properties: attrs(r, i) })) };
+    return new Blob([JSON.stringify(fc, null, 1)], { type: "application/geo+json" });
+  }
+  function kml(list, title) {
+    const pm = list.filter((r) => r.posizione && r.posizione.lat).map((r, i) => {
+      const a = attrs(r, i);
+      const rowsH = Object.entries(a).filter(([, v]) => v !== null).map(([k, v]) => `<tr><td><b>${esc(k)}</b></td><td>${esc(v)}</td></tr>`).join("");
+      return `<Placemark><name>${esc(idLabel(r))}</name><styleUrl>#pianta</styleUrl>
+<description><![CDATA[<table>${rowsH}</table>]]></description>
+<ExtendedData>${Object.entries(a).map(([k, v]) => `<Data name="${esc(k)}"><value>${esc(v ?? "")}</value></Data>`).join("")}</ExtendedData>
+<Point><coordinates>${r.posizione.lon.toFixed(7)},${r.posizione.lat.toFixed(7)},0</coordinates></Point></Placemark>`;
+    }).join("\n");
+    return new Blob([`<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${esc(title)}</name>
+<Style id="pianta"><IconStyle><color>ff327d2e</color><scale>0.9</scale><Icon><href>http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png</href></Icon></IconStyle><LabelStyle><scale>0.8</scale></LabelStyle></Style>
+${pm}
+</Document></kml>`], { type: "application/vnd.google-earth.kml+xml" });
+  }
+  // stile per QGIS (si carica da solo se ha lo stesso nome del file .geojson): pallino verde bordato di bianco + etichetta
+  function qml() {
+    return new Blob([`<!DOCTYPE qgis PUBLIC 'http://mrcc.com/qgis.dtd' 'SYSTEM'>
+<qgis version="3.28" styleCategories="Symbology|Labeling">
+ <renderer-v2 type="singleSymbol" enableorderby="0" symbollevels="0" forceraster="0">
+  <symbols>
+   <symbol type="marker" name="0" alpha="1" clip_to_extent="1" force_rhr="0">
+    <layer class="SimpleMarker" enabled="1" pass="0" locked="0">
+     <Option type="Map">
+      <Option name="color" type="QString" value="46,125,50,255"/>
+      <Option name="name" type="QString" value="circle"/>
+      <Option name="outline_color" type="QString" value="255,255,255,255"/>
+      <Option name="outline_width" type="QString" value="0.6"/>
+      <Option name="outline_width_unit" type="QString" value="MM"/>
+      <Option name="size" type="QString" value="4"/>
+      <Option name="size_unit" type="QString" value="MM"/>
+     </Option>
+    </layer>
+   </symbol>
+  </symbols>
+ </renderer-v2>
+</qgis>`], { type: "text/xml" });
+  }
+
+  return { schedaDocx, xlsx, csv, geojson, kml, qml, staticMap };
+})();
