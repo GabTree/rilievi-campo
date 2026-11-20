@@ -9,7 +9,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="RilieviCampo">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="stylesheet" href="vendor/leaflet.css?v=0.4.3">
+<link rel="stylesheet" href="vendor/leaflet.css?v=0.5">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="icon" href="icons/icon-192.png">
 <title>Rilievi di Campo-GabTree</title>
@@ -97,6 +97,16 @@
   .sw { width: 34px; height: 34px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1.5px #999; }
   .sw.on { box-shadow: 0 0 0 3px var(--verde); }
   .pop-open { margin-top: 6px; border: 0; border-radius: 8px; background: var(--verde); color: #fff; font-weight: 700; padding: 6px 10px; }
+  .badge.todo { background: #e3ecf8; color: #1d4f91; }
+  .pop-btns { display: flex; gap: 6px; margin-top: 6px; }
+  .pop-nav { display: inline-block; border-radius: 8px; background: #e8f1ea; color: var(--verde) !important; font-weight: 700; padding: 6px 10px; text-decoration: none; }
+  .imp-cols { display: grid; gap: 6px; margin: 4px 0 10px; }
+  .imp-col { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 8px; align-items: center; font-size: 14px; }
+  .imp-col span { overflow-wrap: anywhere; font-weight: 600; }
+  .imp-col select { width: 100%; min-width: 0; font-size: 14px; padding: 6px; }
+  .imp-tab { width: 100%; border-collapse: collapse; font-size: 13px; margin: 4px 0 6px; table-layout: fixed; }
+  .imp-tab th, .imp-tab td { text-align: left; padding: 4px; border-bottom: 1px solid #eee; overflow-wrap: anywhere; }
+  .imp-tab th:last-child, .imp-tab td:last-child { width: 40px; }
   .mapbtn.follow { background: var(--verde); color: #fff; }
   .needle-fixed { position: absolute; left: 50%; top: -6px; transform: translateX(-50%); width: 0; height: 0;
     border-left: 10px solid transparent; border-right: 10px solid transparent; border-top: 18px solid var(--rosso); }
@@ -338,7 +348,8 @@
 <!-- LISTA -->
 <section id="list" class="screen">
   <header class="bar"><h1>Progetti</h1></header>
-  <div class="card" id="listBox"></div>
+  <button class="big sec" id="btnListImport">Importa piante da un elenco</button>
+  <div class="card" id="listBox" style="margin-top:12px"></div>
 </section>
 
 <!-- MAPPA DEI PROGETTI -->
@@ -350,13 +361,46 @@
     <div class="pl-head"><label class="f" style="margin:0">Progetti</label>
       <span><button type="button" class="linkbtn" id="btnPmAll">Tutti</button> · <button type="button" class="linkbtn" id="btnPmNone">Nessuno</button></span></div>
     <div id="pmapList"></div>
+    <button class="big sec" id="btnPmImport" style="margin-top:10px">Importa piante da un elenco</button>
+  </div>
+</section>
+
+<!-- IMPORTA -->
+<section id="imp" class="screen">
+  <header class="bar"><button class="iconbtn" id="btnImpBack">‹ Indietro</button><h1>Importa piante</h1></header>
+  <div class="card">
+    <label class="f">1 · Scegli il file</label>
+    <div class="muted">Excel (meglio con il <a href="modello/Modello_rilievi_GabTree.xlsx" download>modello GabTree</a>), CSV, KML/KMZ di Google My Maps o uno ZIP.
+      Per le foto, selezionale <b>insieme</b> al file Excel (o mettile nello ZIP).</div>
+    <input type="file" id="impFile" multiple accept=".xlsx,.xlsm,.csv,.txt,.kml,.kmz,.zip,image/*" style="margin-top:8px">
+    <details style="margin-top:10px"><summary class="muted">…oppure incolla le righe copiate da Excel</summary>
+      <textarea id="impPaste" placeholder="Copia da Excel le righe con la riga dei titoli e incollale qui"></textarea>
+      <button class="big sec" id="btnImpPaste" style="margin-top:6px">Leggi il testo incollato</button></details>
+    <div class="muted warn" id="impMsg" style="margin-top:6px"></div>
+  </div>
+  <div id="impStep2" class="hidden">
+    <div class="card">
+      <label class="f">2 · Controlla</label>
+      <label class="f">Progetto</label>
+      <input type="text" id="impProject" list="lavoriList" placeholder="es. Strumentali Villa Borghese" autocomplete="off">
+      <div class="muted">Se il file ha la colonna «Progetto», ogni riga va nel suo progetto.</div>
+      <div id="impPreview"></div>
+    </div>
+    <div class="card">
+      <label class="f">3 · Come importarle</label>
+      <div class="seg" id="segImpMode"><button data-v="todo">Da completare in campo</button><button data-v="done">Rilievi già completi</button></div>
+      <div class="muted" style="margin-top:6px">«Da completare»: anelli vuoti sulla mappa, completi la scheda in campo. «Già completi»: crea subito schede, foto e file del progetto.</div>
+      <button class="big" id="btnImpGo" style="margin-top:10px">Importa</button>
+    </div>
   </div>
 </section>
 
 <!-- PROGETTO -->
 <section id="project" class="screen">
   <header class="bar"><button class="iconbtn" id="btnPrjBack">‹ Progetti</button><h1 id="prjTitle">Progetto</h1></header>
+  <div class="muted" id="prjProg" style="margin:-4px 0 8px"></div>
   <button class="big" id="btnPrjNew">+ Nuovo rilievo in questo progetto</button>
+  <button class="big sec" id="btnPrjImport" style="margin-top:8px">Importa piante da un elenco</button>
   <div class="card" style="margin-top:12px"><label class="f">Colore sulla mappa</label><div id="prjColor"></div></div>
   <div class="card" id="prjBox" style="margin-top:12px"></div>
   <div class="card">
@@ -365,6 +409,7 @@
     <button class="big sec" id="btnPrjExport" style="margin-top:8px">Crea / aggiorna i file scelti</button>
     <div class="muted" id="prjExportInfo" style="margin-top:6px"></div>
   </div>
+  <button class="big sec hidden" id="btnPrjTodoDel" style="color:var(--rosso)">Elimina le piante ancora da fare</button>
 </section>
 
 <!-- DETTAGLIO -->
@@ -429,15 +474,16 @@
 <div class="toast" id="toast"></div>
 <div id="errBanner" class="hidden"></div>
 
-<script src="config.js?v=0.4.3"></script>
-<script src="vendor/msal-browser.min.js?v=0.4.3"></script>
-<script src="vendor/piexif.js?v=0.4.3"></script>
-<script src="vendor/jszip.min.js?v=0.4.3"></script>
-<script src="vendor/docx.min.js?v=0.4.3"></script>
-<script src="vendor/qrcode.js?v=0.4.3"></script>
-<script src="vendor/leaflet.js?v=0.4.3"></script>
-<script src="arete.js?v=0.4.3"></script>
-<script src="output.js?v=0.4.3"></script>
-<script src="app.js?v=0.4.3"></script>
+<script src="config.js?v=0.5"></script>
+<script src="vendor/msal-browser.min.js?v=0.5"></script>
+<script src="vendor/piexif.js?v=0.5"></script>
+<script src="vendor/jszip.min.js?v=0.5"></script>
+<script src="vendor/docx.min.js?v=0.5"></script>
+<script src="vendor/qrcode.js?v=0.5"></script>
+<script src="vendor/leaflet.js?v=0.5"></script>
+<script src="arete.js?v=0.5"></script>
+<script src="output.js?v=0.5"></script>
+<script src="app.js?v=0.5"></script>
+<script src="import.js?v=0.5"></script>
 </body>
 </html>

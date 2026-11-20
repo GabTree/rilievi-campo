@@ -3,7 +3,7 @@
  * salvataggio offline (IndexedDB) e sincronizzazione su OneDrive (Microsoft Graph). */
 "use strict";
 
-const APP_VERSION = "0.4.3";
+const APP_VERSION = "0.5";
 const CFG = window.APP_CONFIG || {};
 // errori imprevisti: mostrati in rosso in alto, per capire subito cosa non va
 function showErr(msg) {
@@ -240,6 +240,32 @@ window.addEventListener("offline", () => Basemap.applyAll());
 // Ogni progetto ha un colore (scelto in automatico, modificabile con un tocco dalla Mappa o dalla pagina del progetto).
 const PALETTE = ["#e53935", "#fb8c00", "#fdd835", "#43a047", "#00acc1", "#1e88e5", "#8e24aa", "#d81b60", "#6d4c41", "#ffffff"];
 const prjKey = (r) => r.lavoro || "(senza progetto)";
+// "da fare" = pianta importata da un elenco, ancora da rilevare in campo (non va nel cloud e non conta nei contatori)
+const isTodo = (r) => r.status === "todo";
+const hasPos = (r) => r.posizione && typeof r.posizione.lat === "number";
+const navUrl = (r) => `https://www.google.com/maps/dir/?api=1&destination=${r.posizione.lat},${r.posizione.lon}`;
+function popupHtml(r) {
+  const head = `<b>${esc(idLabel(r))}</b>${r.specie ? "<br>" + esc(r.specie) : ""}<br><span class="muted">${esc(prjKey(r))}</span><br>`;
+  return isTodo(r)
+    ? head + `<span class="muted">da fare${r.strumento ? " · " + esc(r.strumento) : ""}</span><div class="pop-btns">
+        <a class="pop-nav" href="${navUrl(r)}" target="_blank" rel="noopener">Portami qui</a>
+        <button type="button" class="pop-open" data-id="${r.id}" data-todo="1">Completa rilievo</button></div>`
+    : head + `<button type="button" class="pop-open" data-id="${r.id}">Apri scheda</button>`;
+}
+function bindPopups(map) {
+  map.on("popupopen", (e) => {
+    const b = e.popup.getElement().querySelector(".pop-open");
+    if (b) b.addEventListener("click", () => { map.closePopup(); b.dataset.todo ? completeTodo(b.dataset.id) : openDetail(b.dataset.id); });
+  });
+}
+// pallino pieno = rilevato, anello vuoto = da fare
+function treeMarker(r, col, on = true) {
+  const ll = [r.posizione.lat, r.posizione.lon];
+  if (!on) return L.circleMarker(ll, isTodo(r) ? { radius: 4, color: "#888", weight: 1.5, fill: false } : { radius: 4, color: "#777", weight: 1, fillColor: "#bbb", fillOpacity: 0.55 });
+  return isTodo(r)
+    ? L.circleMarker(ll, { radius: 8, color: col, weight: 4, fillColor: "#fff", fillOpacity: 0.25 })
+    : L.circleMarker(ll, { radius: 8, color: "#222", weight: 1.5, fillColor: col, fillOpacity: 1 });
+}
 function prjColor(name) {
   if (S.prjColors && S.prjColors[name]) return S.prjColors[name];
   let h = 0; for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0;
@@ -272,6 +298,7 @@ const MapView = {
     this.map = L.map("map", { zoomControl: false, attributionControl: true }).setView([41.9, 12.5], 6);
     Basemap.attach(this.map);
     this.layer = L.layerGroup().addTo(this.map);
+    bindPopups(this.map);
     this.map.on("dragstart", () => { this.follow = false; $("#btnCenter").classList.remove("follow"); });
     $("#btnCenter").classList.add("follow");
     $("#btnCenter").addEventListener("click", () => {
@@ -305,15 +332,15 @@ const MapView = {
   async plot() {
     if (!this.map) return;
     this.layer.clearLayers();
-    (await DB.all()).filter((r) => r.posizione && r.posizione.lat).forEach((r) => {
-      L.circleMarker([r.posizione.lat, r.posizione.lon], { radius: 7, color: "#333", weight: 1.5, fillColor: prjColor(prjKey(r)), fillOpacity: 1 })
-        .bindTooltip(`${idLabel(r)}${r.specie ? " · " + r.specie : ""}`, { direction: "top" })
-        .on("click", () => openDetail(r.id)).addTo(this.layer);
+    (await DB.all()).filter(hasPos).forEach((r) => {
+      treeMarker(r, prjColor(prjKey(r))).bindPopup(popupHtml(r)).addTo(this.layer);
     });
   },
   refresh() { if (this.map) { setTimeout(() => this.map.invalidateSize(), 50); this.plot(); } },
 };
 
+// "12" oppure "4/12 fatte" se nel progetto ci sono piante da fare
+function avanz(list) { const t = list.filter(isTodo).length; return t ? `${list.length - t}/${list.length} fatte` : String(list.length); }
 /* ------------------------------------------------- Scheda Mappa: progetti come layer */
 // Elenco dei progetti con una spunta ciascuno: i progetti spuntati si "accendono" con il loro colore,
 // gli altri restano pallini grigi piccoli. Tocco su un pallino = scheda della pianta.
@@ -324,11 +351,7 @@ const ProjMap = {
     this.map = L.map("pmapMap", { zoomControl: false, attributionControl: true }).setView([41.9, 12.5], 6);
     Basemap.attach(this.map);
     this.layer = L.layerGroup().addTo(this.map);
-    // "Apri scheda" nel fumetto del pallino
-    this.map.on("popupopen", (e) => {
-      const b = e.popup.getElement().querySelector(".pop-open");
-      if (b) b.addEventListener("click", () => { this.map.closePopup(); openDetail(b.dataset.id); });
-    });
+    bindPopups(this.map);
     if (GPS.last) this.me(GPS.last);
   },
   me(f) {
@@ -355,14 +378,7 @@ const ProjMap = {
     // prima gli spenti (sotto), poi gli accesi (sopra)
     names.sort((a, b) => this.isOn(a) - this.isOn(b)).forEach((n) => {
       const on = this.isOn(n), col = prjColor(n);
-      g[n].filter((r) => r.posizione && r.posizione.lat).forEach((r) => {
-        const m = L.circleMarker([r.posizione.lat, r.posizione.lon], on
-          ? { radius: 8, color: "#222", weight: 1.5, fillColor: col, fillOpacity: 1 }
-          : { radius: 4, color: "#777", weight: 1, fillColor: "#bbb", fillOpacity: 0.55 });
-        m.bindPopup(`<b>${esc(idLabel(r))}</b>${r.specie ? "<br>" + esc(r.specie) : ""}<br><span class="muted">${esc(n)}</span>
-          <br><button type="button" class="pop-open" data-id="${r.id}">Apri scheda</button>`);
-        m.addTo(this.layer);
-      });
+      g[n].filter(hasPos).forEach((r) => treeMarker(r, col, on).bindPopup(popupHtml(r)).addTo(this.layer));
     });
   },
   async renderList() {
@@ -370,7 +386,7 @@ const ProjMap = {
     const names = Object.keys(g).sort((x, y) => Math.max(...g[y].map((r) => r.createdAt)) - Math.max(...g[x].map((r) => r.createdAt)));
     box.innerHTML = names.map((n, i) => `<div class="pl" data-i="${i}">
         <label class="pl-row"><input type="checkbox" ${this.isOn(n) ? "checked" : ""}>
-          <span class="pl-name">${esc(n)}</span><span class="muted">${g[n].length}</span></label>
+          <span class="pl-name">${esc(n)}</span><span class="muted">${avanz(g[n])}</span></label>
         <button type="button" class="pl-col" style="background:${prjColor(n)}" aria-label="Cambia colore"></button>
         <div class="pl-pal hidden">${swatches(n)}</div></div>`).join("");
     box.querySelectorAll(".pl").forEach((el) => {
@@ -386,7 +402,7 @@ const ProjMap = {
   },
   async fit() {
     const g = await this.groups(), pts = [];
-    Object.keys(g).filter((n) => this.isOn(n)).forEach((n) => g[n].forEach((r) => r.posizione && r.posizione.lat && pts.push([r.posizione.lat, r.posizione.lon])));
+    Object.keys(g).filter((n) => this.isOn(n)).forEach((n) => g[n].forEach((r) => hasPos(r) && pts.push([r.posizione.lat, r.posizione.lon])));
     if (pts.length) this.map.fitBounds(pts, { padding: [30, 30], maxZoom: 19 });
     else if (GPS.last) this.map.setView([GPS.last.lat, GPS.last.lon], 17);
   },
@@ -629,6 +645,34 @@ async function openForm(project) {
   setTimeout(() => { const f = GPS.current(); if (f) { updateGpsUI(); formMapFollowGps(f); } }, 150);
   updateNamePreview();
 }
+// Pianta "da fare": apre la scheda già compilata con i dati importati (posizione dal file, modificabile)
+async function completeTodo(id) {
+  const t = await DB.get(id);
+  if (!t) return;
+  await openForm(t.lavoro);
+  if (!draft) return;
+  draft = { ...draft, ...t, id: t.id, createdAt: Date.now(), status: "pending", foto: t.foto || [], allegati: t.allegati || [], daElenco: true };
+  delete draft.posizione;
+  const set = (i, v) => ($("#" + i).value = v ?? "");
+  set("fNgs", t.ngs); set("fNcart", t.ncart); set("fNprog", t.nprog); set("fSpecie", t.specie); set("fDiam", t.diametro120); set("fAlt", t.altezza);
+  set("fProb", t.problematiche); set("fInt", t.interventi); set("fStrum", t.strumento);
+  if (t.dataValutazione) set("fData", t.dataValutazione); else set("fData", isoToday());
+  draft.tipoValutazione = tipoNorm(t.tipoValutazione); setSeg("segValutazione", draft.tipoValutazione);
+  const strum = draft.tipoValutazione === "Valutazione" && !!(t.strumOn || t.strumento || t.esitoProva);
+  $("#fStrumOn").checked = strum; $("#strumFields").classList.toggle("hidden", !strum); setSeg("segEsito", t.esitoProva || "");
+  applyValutazione();
+  if (hasPos(t)) {
+    draft.posManuale = { lat: t.posizione.lat, lon: t.posizione.lon };
+    formMap.set(t.posizione.lat, t.posizione.lon, true); formMap._centered = true;
+    $("#formMapHint").innerHTML = 'Posizione presa dall\'elenco importato. <a href="#" id="lnkBackGps">Usa la mia posizione GPS</a>';
+    $("#lnkBackGps").addEventListener("click", (e) => {
+      e.preventDefault(); draft.posManuale = null;
+      $("#formMapHint").textContent = "Se il GPS non è preciso, trascina il pallino verde sull'albero.";
+      const f = GPS.current(); if (f) formMap.set(f.lat, f.lon, true);
+    });
+  }
+  renderThumbs(); updateNamePreview(); checkDuplicate();
+}
 // l'indagine strumentale fa parte della valutazione
 function applyValutazione() { $("#boxStrum").classList.toggle("hidden", draft.tipoValutazione !== "Valutazione"); updateNamePreview(); }
 
@@ -727,7 +771,7 @@ async function saveForm() {
     catch (e) { $("#formErr").textContent = "Errore nella scheda ARETÉ: " + e.message; return; }
     if (r.arete.ubicaz) await DB.setKV("areteRemember", { ubicaz: r.arete.ubicaz });
   }
-  r.status = "pending";
+  r.status = "pending"; delete r.daElenco;
   await DB.put(r);
   await DB.setKV("lastLavoro", { lavoro: r.lavoro, tipoValutazione: r.tipoValutazione });
   draft = null;
@@ -743,7 +787,7 @@ async function checkDuplicate() {
   updateNamePreview();
   const lav = $("#fLavoro").value.trim().toLowerCase();
   const gs = $("#fNgs").value.trim(), cart = $("#fNcart").value.trim(), rel = $("#fNprog").value.trim();
-  const all = (await DB.all()).filter((r) => (r.lavoro || "").toLowerCase() === lav);
+  const all = (await DB.all()).filter((r) => (r.lavoro || "").toLowerCase() === lav && !isTodo(r) && r.id !== draft.id);
   const hit = [];
   if (gs && all.some((r) => r.ngs === gs)) hit.push("gs." + gs);
   if (cart && all.some((r) => r.ncart === cart)) hit.push("cart." + cart);
@@ -781,7 +825,7 @@ async function treeFiles(r, o, onlyData) {
 }
 // file del progetto: riepilogo (Excel + CSV) e, a richiesta, il vettoriale per QGIS / Google Earth
 async function projectFiles(name, o) {
-  const list = (await DB.all()).filter((r) => r.lavoro === name)
+  const list = (await DB.all()).filter((r) => r.lavoro === name && !isTodo(r))
     .sort((a, b) => (a.dataValutazione || "").localeCompare(b.dataValutazione || "") || a.createdAt - b.createdAt);
   const c = compatto(name), out = [];
   if (o.riepilogo) {
@@ -1073,7 +1117,7 @@ const Sync = {
       if (Local.zipMode && !manual) { setSyncInfo("Tocca «Sincronizza ora» per preparare lo ZIP da salvare sul telefono"); return; }
       try { await Local.ensure(manual); } catch (e) { setSyncInfo(e.message); return; }
     } else if (!navigator.onLine) { if (manual) toast("Nessuna connessione: i rilievi restano sul telefono"); return; }
-    const pending = (await DB.all()).filter((r) => r.status !== "synced");
+    const pending = (await DB.all()).filter((r) => r.status !== "synced" && !isTodo(r));
     if (!pending.length) { if (manual) toast("Tutto sincronizzato"); setSyncInfo(`Tutto sincronizzato su ${P.name}`); return; }
     this.running = true;
     let ok = 0, lastErr = "";
@@ -1103,7 +1147,7 @@ const Sync = {
     }
     if (P === Local) await Local.finish();
     this.running = false;
-    const left = (await DB.all()).filter((r) => r.status !== "synced").length;
+    const left = (await DB.all()).filter((r) => r.status !== "synced" && !isTodo(r)).length;
     setSyncInfo(left || lastErr ? `${ok} inviati${left ? ", " + left + " da reinviare" : ""}${lastErr ? " · " + lastErr : ""}` : `Sincronizzato su ${P.name} alle ${new Date().toLocaleTimeString("it-IT")}`);
     refreshCounts();
   },
@@ -1119,7 +1163,7 @@ const Sync = {
     const info = (t) => ($("#prjExportInfo").textContent = t);
     try {
       const base = `${safe(S.folder || "Rilievi")}/${await projectFolder(name)}`;
-      const list = (await DB.all()).filter((r) => r.lavoro === name);
+      const list = (await DB.all()).filter((r) => r.lavoro === name && !isTodo(r));
       let i = 0;
       for (const r of list) {
         info(`Pianta ${++i} di ${list.length}…`);
@@ -1140,7 +1184,7 @@ function setSyncInfo(t) { $("#syncInfo").textContent = t; }
 
 /* ----------------------------------------------------- Lista/dettaglio */
 async function refreshCounts() {
-  const all = await DB.all();
+  const all = (await DB.all()).filter((r) => !isTodo(r));
   $("#pendingCount").textContent = all.filter((r) => r.status !== "synced").length;
   // contatore delle valutazioni (data della valutazione)
   const now = Date.now(), day = 86400000;
@@ -1150,7 +1194,7 @@ async function refreshCounts() {
   $("#cntM").textContent = all.filter((r) => age(r) < 30).length;
   $("#cntY").textContent = all.filter((r) => age(r) < 365).length;
 }
-const STATO = { pending: ["in attesa", "pending"], synced: ["inviato", "synced"], error: ["errore", "error"] };
+const STATO = { pending: ["in attesa", "pending"], synced: ["inviato", "synced"], error: ["errore", "error"], todo: ["da fare", "todo"] };
 // Progetti = rilievi raggruppati per cliente/località, come le cartelle sul cloud
 async function renderList() {
   const all = await DB.all();
@@ -1161,13 +1205,14 @@ async function renderList() {
   const names = Object.keys(groups).sort((x, y) => Math.max(...groups[y].map((r) => r.createdAt)) - Math.max(...groups[x].map((r) => r.createdAt)));
   box.innerHTML = "";
   names.forEach((n) => {
-    const list = groups[n], last = Math.max(...list.map((r) => r.createdAt)), pend = list.filter((r) => r.status !== "synced").length;
+    const list = groups[n], last = Math.max(...list.map((r) => r.createdAt)), pend = list.filter((r) => r.status !== "synced" && !isTodo(r)).length;
+    const todo = list.filter(isTodo).length;
     const withFoto = list.find((r) => r.foto && r.foto[0]);
     const d = document.createElement("div");
     d.className = "item";
     d.innerHTML = `<img src="${withFoto ? URL.createObjectURL(withFoto.foto[0].thumb) : "icons/icon-192.png"}"><div class="t"><b>${esc(n)}</b>
       <span class="muted">${list.length} ${list.length === 1 ? "pianta" : "piante"} · ultimo ${new Date(last).toLocaleDateString("it-IT")}</span></div>
-      <span class="badge ${pend ? "pending" : "synced"}">${pend ? pend + " da inviare" : "inviato"}</span>`;
+      <span class="badge ${todo ? "todo" : pend ? "pending" : "synced"}">${todo ? todo + " da fare" : pend ? pend + " da inviare" : "inviato"}</span>`;
     d.addEventListener("click", () => openProject(n));
     box.appendChild(d);
   });
@@ -1176,7 +1221,11 @@ let currentProject = null;
 async function openProject(name) {
   currentProject = name;
   $("#prjTitle").textContent = name;
-  const list = (await DB.all()).filter((r) => (r.lavoro || "(senza progetto)") === name).sort((a, b) => b.createdAt - a.createdAt);
+  const list = (await DB.all()).filter((r) => (r.lavoro || "(senza progetto)") === name)
+    .sort((a, b) => isTodo(b) - isTodo(a) || b.createdAt - a.createdAt);
+  const nTodo = list.filter(isTodo).length;
+  $("#prjProg").textContent = nTodo ? `${list.length - nTodo} di ${list.length} piante rilevate · ${nTodo} da fare` : "";
+  $("#btnPrjTodoDel").classList.toggle("hidden", !nTodo);
   const box = $("#prjBox");
   box.innerHTML = "";
   list.forEach((r) => {
@@ -1184,8 +1233,8 @@ async function openProject(name) {
     d.className = "item";
     const st = STATO[r.status] || ["", ""];
     d.innerHTML = `<img src="${r.foto[0] ? URL.createObjectURL(r.foto[0].thumb) : "icons/icon-192.png"}"><div class="t"><b>${esc(idLabel(r))}${r.specie ? " · " + esc(r.specie) : ""}</b>
-      <span class="muted">${esc(r.cartella)}</span></div><span class="badge ${st[1]}">${st[0]}</span>`;
-    d.addEventListener("click", () => openDetail(r.id));
+      <span class="muted">${esc(isTodo(r) ? (r.strumento || "tocca per completare il rilievo") : r.cartella)}</span></div><span class="badge ${st[1]}">${st[0]}</span>`;
+    d.addEventListener("click", () => (isTodo(r) ? completeTodo(r.id) : openDetail(r.id)));
     box.appendChild(d);
   });
   const pc = $("#prjColor"); pc.innerHTML = swatches(name); bindSwatches(pc, name);
@@ -1253,7 +1302,7 @@ async function deleteCurrent() {
 /* ------------------------------------------------------- Navigazione */
 function show(id) {
   $$(".screen").forEach((s) => s.classList.toggle("active", s.id === id));
-  const tab = id === "project" || id === "detail" ? "list" : id;
+  const tab = id === "project" || id === "detail" || id === "imp" ? "list" : id;
   if (id === "home") refreshCounts();
   $$("nav.tabs button").forEach((b) => b.classList.toggle("on", b.dataset.go === tab));
   $("nav.tabs").classList.toggle("hidden", id === "camera" || id === "welcome");
@@ -1346,6 +1395,15 @@ async function main() {
   ["fNgs", "fNcart", "fNprog"].forEach((id) => $("#" + id).addEventListener("change", checkDuplicate));
   $("#btnPrjBack").addEventListener("click", () => show("list"));
   $("#btnPmFit").addEventListener("click", () => ProjMap.fit());
+  $("#btnPrjImport").addEventListener("click", () => Importer.open(currentProject));
+  $("#btnPmImport").addEventListener("click", () => Importer.open(""));
+  $("#btnListImport").addEventListener("click", () => Importer.open(""));
+  $("#btnPrjTodoDel").addEventListener("click", async () => {
+    const todo = (await DB.all()).filter((r) => r.lavoro === currentProject && isTodo(r));
+    if (!todo.length || !confirm(`Eliminare le ${todo.length} piante ancora da fare di questo progetto? I rilievi già fatti restano.`)) return;
+    for (const r of todo) await DB.del(r.id);
+    toast("Piante da fare eliminate"); openProject(currentProject); MapView.plot();
+  });
   $("#btnPmAll").addEventListener("click", () => ProjMap.all(true));
   $("#btnPmNone").addEventListener("click", () => ProjMap.all(false));
   $("#btnPrjNew").addEventListener("click", () => { Compass.start(); openForm(currentProject); });
