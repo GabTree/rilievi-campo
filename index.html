@@ -9,8 +9,8 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="RilieviCampo">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="stylesheet" href="vendor/leaflet.css?v=0.3.0">
-<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="vendor/leaflet.css?v=0.3.1">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="icon" href="icons/icon-192.png">
 <title>Rilievi di Campo-GabTree</title>
 <style>
@@ -70,6 +70,7 @@
   #errBanner { position: fixed; top: calc(6px + var(--safe-top)); left: 8px; right: 8px; z-index: 1002; background: #b3261e; color: #fff;
     border-radius: 12px; padding: 10px 12px; font-size: 13px; white-space: pre-wrap; }
   .minimap { height: 220px; border-radius: 12px; margin: 8px 0 6px; background: #e6ebe7; }
+  .hdr-logo { width: 44px; height: 44px; border-radius: 11px; box-shadow: 0 1px 3px rgba(0,0,0,.15); }
   .brand { display: block; font-size: 13px; letter-spacing: .08em; color: var(--verde-2); font-weight: 800; }
   .tree-pin { width: 22px; height: 22px; border-radius: 50%; background: #2e7d32; border: 3px solid #fff; box-shadow: 0 0 5px rgba(0,0,0,.5); }
   .mapbtn.follow { background: var(--verde); color: #fff; }
@@ -169,7 +170,7 @@
 
 <!-- HOME: bussola + azioni -->
 <section id="home" class="screen active">
-  <header class="bar"><h1>Rilievi di Campo<span class="brand">GabTree</span></h1><span id="netState" class="badge pending">offline</span></header>
+  <header class="bar"><img src="icons/icon-192.png" alt="" class="hdr-logo"><h1>Rilievi di Campo<span class="brand">GabTree</span></h1><span id="netState" class="badge pending">offline</span></header>
   <div class="card mapcard">
     <div id="map"></div>
     <button class="mapbtn" id="btnCenter" title="Centra sulla mia posizione">◎</button>
@@ -358,12 +359,12 @@
 <div class="toast" id="toast"></div>
 <div id="errBanner" class="hidden"></div>
 
-<script src="config.js?v=0.3.0"></script>
-<script src="vendor/msal-browser.min.js?v=0.3.0"></script>
-<script src="vendor/piexif.js?v=0.3.0"></script>
-<script src="vendor/jszip.min.js?v=0.3.0"></script>
-<script src="vendor/leaflet.js?v=0.3.0"></script>
-<script src="arete.js?v=0.3.0"></script>
-<script src="app.js?v=0.3.0"></script>
+<script src="config.js?v=0.3.1"></script>
+<script src="vendor/msal-browser.min.js?v=0.3.1"></script>
+<script src="vendor/piexif.js?v=0.3.1"></script>
+<script src="vendor/jszip.min.js?v=0.3.1"></script>
+<script src="vendor/leaflet.js?v=0.3.1"></script>
+<script src="arete.js?v=0.3.1"></script>
+<script src="app.js?v=0.3.1"></script>
 </body>
 </html>
