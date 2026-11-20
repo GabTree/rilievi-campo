@@ -3,7 +3,7 @@
  * salvataggio offline (IndexedDB) e sincronizzazione su OneDrive (Microsoft Graph). */
 "use strict";
 
-const APP_VERSION = "0.4.0";
+const APP_VERSION = "0.4.1";
 const CFG = window.APP_CONFIG || {};
 // errori imprevisti: mostrati in rosso in alto, per capire subito cosa non va
 function showErr(msg) {
@@ -65,7 +65,7 @@ const DB = {
 /* ---------------------------------------------------------- Settings */
 const S = { folder: "Rilievi", name: "", init: "", north: "T", decl: 3.5, quality: 2048, arrow: true,
   provider: "", msClientId: "", gClientId: "", setupDone: false, areteOn: false,
-  studio: "", qualifica: "", out: { schede: true, foto: true, riepilogo: true, vettoriale: false } };
+  studio: "", qualifica: "", out: { schede: true, arete: true, foto: true, riepilogo: true, vettoriale: false } };
 async function loadSettings() {
   const v = await DB.getKV("settings");
   if (v) Object.assign(S, v);
@@ -612,9 +612,9 @@ async function treeFiles(r, o, onlyData) {
   const out = [];
   if (o.schede) {
     out.push({ path: `Schede/${r.cartella}.docx`, blob: await OUT.schedaDocx(r) });
-    if (r.areteXlsx) out.push({ path: `Schede/${r.cartella}_ARETE.xlsx`, blob: r.areteXlsx });
     if (!onlyData) r.allegati.forEach((a) => out.push({ path: `Schede/${r.cartella}_allegato_${safe(a.name)}`, blob: a.blob }));
   }
+  if (o.arete !== false && r.areteXlsx) out.push({ path: `Schede ARETE/${r.cartella}_ARETE.xlsx`, blob: r.areteXlsx });
   if (o.foto && !onlyData) r.foto.forEach((f, i) => {
     out.push({ path: "Foto/" + fotoName(r, i), blob: f.clean });
     if (f.arrow) out.push({ path: "Foto/" + fotoName(r, i, true), blob: f.arrow });
@@ -637,14 +637,11 @@ async function projectFiles(name, o) {
   }
   return out;
 }
-const OUT_LABELS = [
-  ["schede", "Schede di valutazione", "un file Word per pianta (e la scheda ARETÉ, se compilata)"],
-  ["foto", "Foto", "cartella con le foto nominate e in ordine"],
-  ["riepilogo", "Tabella riassuntiva", "tutte le piante del progetto, in Excel e CSV"],
-  ["vettoriale", "File per QGIS e Google Earth", "pallini verdi con i dati della pianta negli attributi"],
-];
+const OUT_LABELS = [["schede", "Schede di valutazione"], ["arete", "Schede ARETÉ"], ["foto", "Foto"],
+  ["riepilogo", "Tabella riassuntiva"], ["vettoriale", "File per QGIS e Google Earth"]];
 function renderOutChecks(box, o, onChange) {
-  box.innerHTML = OUT_LABELS.map(([k, t, d]) => `<label><input type="checkbox" data-o="${k}" ${o[k] ? "checked" : ""}><span>${t}<small>${d}</small></span></label>`).join("");
+  if (o.arete === undefined) o.arete = true;
+  box.innerHTML = OUT_LABELS.map(([k, t]) => `<label><input type="checkbox" data-o="${k}" ${o[k] ? "checked" : ""}><span>${t}</span></label>`).join("");
   box.querySelectorAll("input").forEach((i) => i.addEventListener("change", () => onChange(i.dataset.o, i.checked)));
 }
 
@@ -839,8 +836,73 @@ const GoogleDrive = {
   },
 };
 
-const provider = () => (S.provider === "google" ? GoogleDrive : S.provider === "onedrive" ? OneDrive : null);
-const providerAuth = () => (S.provider === "google" ? GAuth : S.provider === "onedrive" ? Auth : null);
+/* ------------------------------------------- Cartella locale del dispositivo */
+// Chrome/Edge su computer: scrive direttamente nella cartella scelta (File System Access API).
+// iPhone e Android non lo permettono: l'app prepara uno ZIP e lo si salva con "Condividi → Salva su File".
+const Local = {
+  name: "Cartella locale",
+  handle: null, zip: null, files: 0,
+  get dirMode() { return typeof window.showDirectoryPicker === "function"; },
+  get zipMode() { return !this.dirMode; },
+  async load() { try { this.handle = (await DB.getKV("localDir")) || null; } catch (e) { this.handle = null; } },
+  configured() { return true; },
+  connected() { return this.zipMode || !!this.handle; },
+  label() { return this.zipMode ? "sul telefono (ZIP da salvare con Condividi → Salva su File)" : this.handle ? "cartella «" + this.handle.name + "»" : ""; },
+  async login() {
+    if (this.zipMode) { toast("Su questo dispositivo i file vengono salvati come ZIP"); renderSettings(); return; }
+    try {
+      this.handle = await window.showDirectoryPicker({ mode: "readwrite" });
+      await DB.setKV("localDir", this.handle);
+      toast("Cartella scelta: " + this.handle.name);
+    } catch (e) { /* annullato */ }
+    renderSettings();
+  },
+  async logout() { this.handle = null; await DB.setKV("localDir", null); renderSettings(); },
+  // permesso di scrittura: va chiesto con un tocco dell'utente
+  async ensure(interactive) {
+    if (this.zipMode) return true;
+    if (!this.handle) throw new Error("Cartella locale non scelta");
+    let st = await this.handle.queryPermission({ mode: "readwrite" });
+    if (st !== "granted" && interactive) st = await this.handle.requestPermission({ mode: "readwrite" });
+    if (st !== "granted") throw new Error("Permesso sulla cartella da rinnovare: tocca Sincronizza ora");
+    return true;
+  },
+  begin() { if (this.zipMode) { this.zip = new JSZip(); this.files = 0; } },
+  async upload(path, blob) {
+    if (this.zipMode) { this.zip.file(path, blob); this.files++; return; }
+    const parts = path.split("/"), name = parts.pop();
+    let dir = this.handle;
+    for (const d of parts) dir = await dir.getDirectoryHandle(d, { create: true });
+    const fh = await dir.getFileHandle(name, { create: true });
+    const w = await fh.createWritable();
+    await w.write(blob); await w.close();
+  },
+  async readText() { return null; },
+  // ZIP pronto: si salva con un tocco (il menu Condividi va aperto da un gesto dell'utente)
+  async finish() {
+    if (!this.zipMode || !this.zip || !this.files) return;
+    const blob = await this.zip.generateAsync({ type: "blob" });
+    const file = new File([blob], `Rilievi_${isoToday().replace(/-/g, "")}.zip`, { type: "application/zip" });
+    this.zip = null;
+    showZipReady(file, this.files);
+  },
+};
+function showZipReady(file, n) {
+  const box = $("#zipReady");
+  box.classList.remove("hidden");
+  $("#zipInfo").textContent = `${file.name} · ${n} file · ${(file.size / 1048576).toFixed(1)} MB`;
+  $("#btnZipClose").onclick = () => box.classList.add("hidden");
+  $("#btnZipSave").onclick = async () => {
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ files: [file], title: file.name }); box.classList.add("hidden"); return; } catch (e) { if (e.name === "AbortError") return; }
+    }
+    const a = document.createElement("a"); a.href = URL.createObjectURL(file); a.download = file.name; a.click();
+    box.classList.add("hidden");
+  };
+}
+
+const provider = () => (S.provider === "google" ? GoogleDrive : S.provider === "onedrive" ? OneDrive : S.provider === "local" ? Local : null);
+const providerAuth = () => (S.provider === "google" ? GAuth : S.provider === "onedrive" ? Auth : S.provider === "local" ? Local : null);
 
 const Sync = {
   running: false,
@@ -849,12 +911,16 @@ const Sync = {
     if (this.running) return;
     const P = provider(), A = providerAuth();
     if (!P || !A.connected()) { setSyncInfo("Archivio non collegato (Impostazioni)"); if (manual) toast("Collega OneDrive o Google Drive nelle Impostazioni"); return; }
-    if (!navigator.onLine) { if (manual) toast("Nessuna connessione: i rilievi restano sul telefono"); return; }
+    if (P === Local) {
+      if (Local.zipMode && !manual) { setSyncInfo("Tocca «Sincronizza ora» per preparare lo ZIP da salvare sul telefono"); return; }
+      try { await Local.ensure(manual); } catch (e) { setSyncInfo(e.message); return; }
+    } else if (!navigator.onLine) { if (manual) toast("Nessuna connessione: i rilievi restano sul telefono"); return; }
     const pending = (await DB.all()).filter((r) => r.status !== "synced");
     if (!pending.length) { if (manual) toast("Tutto sincronizzato"); setSyncInfo(`Tutto sincronizzato su ${P.name}`); return; }
     this.running = true;
     let ok = 0, lastErr = "";
     const touched = new Set();
+    if (P === Local) Local.begin();
     for (const r of pending) {
       try {
         setSyncInfo(`Invio ${r.cartella} su ${P.name}…`);
@@ -877,6 +943,7 @@ const Sync = {
         for (const f of await projectFiles(name, S.out)) await P.upload(`${base}/${f.path}`, f.blob, manual);
       } catch (e) { lastErr = String(e.message || e); }
     }
+    if (P === Local) await Local.finish();
     this.running = false;
     const left = (await DB.all()).filter((r) => r.status !== "synced").length;
     setSyncInfo(left || lastErr ? `${ok} inviati${left ? ", " + left + " da reinviare" : ""}${lastErr ? " · " + lastErr : ""}` : `Sincronizzato su ${P.name} alle ${new Date().toLocaleTimeString("it-IT")}`);
@@ -886,9 +953,11 @@ const Sync = {
   async exportProject(name, o) {
     const P = provider(), A = providerAuth();
     if (!P || !A.connected()) { toast("Collega OneDrive o Google Drive nelle Impostazioni"); return; }
-    if (!navigator.onLine) { toast("Serve la connessione"); return; }
+    if (P === Local) { try { await Local.ensure(true); } catch (e) { toast(e.message); return; } }
+    else if (!navigator.onLine) { toast("Serve la connessione"); return; }
     if (this.running) { toast("Sincronizzazione in corso, riprova tra poco"); return; }
     this.running = true;
+    if (P === Local) Local.begin();
     const info = (t) => ($("#prjExportInfo").textContent = t);
     try {
       const base = `${safe(S.folder || "Rilievi")}/${await projectFolder(name)}`;
@@ -901,6 +970,7 @@ const Sync = {
       }
       info("File del progetto…");
       for (const f of await projectFiles(name, o)) await P.upload(`${base}/${f.path}`, f.blob, true);
+      if (P === Local) await Local.finish();
       info(`Fatto: ${base}`);
       toast("File del progetto aggiornati");
     } catch (e) { info("Errore: " + (e.message || e)); }
@@ -927,7 +997,7 @@ const STATO = { pending: ["in attesa", "pending"], synced: ["inviato", "synced"]
 async function renderList() {
   const all = await DB.all();
   const box = $("#listBox");
-  if (!all.length) { box.innerHTML = '<div class="muted">Nessun progetto. Il primo nasce con il primo rilievo.</div>'; return; }
+  if (!all.length) { box.innerHTML = ""; return; }
   const groups = {};
   all.forEach((r) => { const k = r.lavoro || "(senza progetto)"; (groups[k] = groups[k] || []).push(r); });
   const names = Object.keys(groups).sort((x, y) => Math.max(...groups[y].map((r) => r.createdAt)) - Math.max(...groups[x].map((r) => r.createdAt)));
@@ -950,7 +1020,7 @@ async function openProject(name) {
   $("#prjTitle").textContent = name;
   const list = (await DB.all()).filter((r) => (r.lavoro || "(senza progetto)") === name).sort((a, b) => b.createdAt - a.createdAt);
   const box = $("#prjBox");
-  box.innerHTML = list.length ? "" : '<div class="muted">Nessun rilievo.</div>';
+  box.innerHTML = "";
   list.forEach((r) => {
     const d = document.createElement("div");
     d.className = "item";
@@ -1039,12 +1109,12 @@ async function renderSettings() {
   $("#sStudio").value = S.studio || ""; $("#sQual").value = S.qualifica || "";
   renderOutChecks($("#setOut"), S.out, (k, v) => { S.out[k] = v; saveSettings(); });
   const A = providerAuth();
-  $("#acctInfo").textContent = !A ? "Scegli dove salvare i rilievi" :
+  $("#acctInfo").textContent = !A ? "" :
     !A.configured() ? "Manca il codice dell'app: riapri la configurazione iniziale" :
-    A.connected() ? `${provider().name} collegato: ${A.label()}` : `${provider().name} non collegato`;
-  $("#btnLogin").textContent = A && !A.configured() ? "Configura" : "Collega";
+    A.connected() ? `${provider().name}: ${A.label()}` : `${provider().name} non collegato`;
+  $("#btnLogin").textContent = A && !A.configured() ? "Configura" : A === Local ? "Scegli la cartella" : "Collega";
   $("#btnLogin").classList.toggle("hidden", !A || A.connected());
-  $("#btnLogout").classList.toggle("hidden", !A || !A.connected());
+  $("#btnLogout").classList.toggle("hidden", !A || !A.connected() || (A === Local && Local.zipMode));
   const tpl = await DB.getKV("areteTemplate");
   $("#areteTplInfo").textContent = tpl ? `Caricato: ${tpl.name} (${new Date(tpl.date).toLocaleDateString("it-IT")})` : "Nessun modello caricato";
   let perm = "?";
@@ -1075,6 +1145,7 @@ async function main() {
   await loadSettings();
   S.north = "T";   // sempre nord geografico
   GAuth.load();
+  await Local.load();
   const gBack = await GAuth.handleRedirect();
   if (gBack) S.provider = "google";
   drawRose();
@@ -1191,7 +1262,7 @@ async function main() {
   });
   $("#btnLogout").addEventListener("click", async () => {
     const A = providerAuth();
-    if (A === GAuth) { GAuth.logout(); renderSettings(); } else if (A) await A.logout();
+    if (A === GAuth || A === Local) { await A.logout(); renderSettings(); } else if (A) await A.logout();
   });
   $("#sAreteTpl").addEventListener("change", async (e) => {
     const f = e.target.files[0];
@@ -1224,6 +1295,7 @@ async function main() {
     await saveSettings();
     const A = providerAuth();
     if (!A.configured()) { $("#wErr").textContent = "Inserisci il codice dell'app"; return; }
+    if (A === Local) { await Local.login(); if (Local.connected()) { S.setupDone = true; await saveSettings(); show("home"); } return; }
     if (A === Auth && !Auth.msal) await Auth.init();
     A.login();
   });

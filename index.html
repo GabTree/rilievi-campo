@@ -9,7 +9,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="RilieviCampo">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="stylesheet" href="vendor/leaflet.css?v=0.4.0">
+<link rel="stylesheet" href="vendor/leaflet.css?v=0.4.1">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="icon" href="icons/icon-192.png">
 <title>Rilievi di Campo-GabTree</title>
@@ -76,7 +76,8 @@
   .counters span { font-size: 12px; color: var(--grigio); }
   .outchk label { display: flex; align-items: center; gap: 10px; padding: 8px 0; font-size: 16px; border-bottom: 1px solid #eee; }
   .outchk input { width: 22px; height: 22px; flex: 0 0 auto; }
-  .outchk small { display: block; color: var(--grigio); font-size: 13px; }
+  #zipReady { position: fixed; left: 12px; right: 12px; bottom: calc(84px + var(--safe-bot)); z-index: 1003; box-shadow: 0 4px 18px rgba(0,0,0,.25); }
+  .sec-title { font-weight: 800; color: var(--verde); margin: 4px 2px 6px; font-size: 15px; }
   .brand { display: block; font-size: 13px; letter-spacing: .08em; color: var(--verde-2); font-weight: 800; }
   .tree-pin { width: 22px; height: 22px; border-radius: 50%; background: #2e7d32; border: 3px solid #fff; box-shadow: 0 0 5px rgba(0,0,0,.5); }
   .mapbtn.follow { background: var(--verde); color: #fff; }
@@ -159,7 +160,7 @@
     </div>
     <div class="step"><b>Dove salvare i rilievi</b>
       <div class="muted">Ognuno salva nel proprio cloud personale e, se vuole, condivide la cartella con i colleghi.</div>
-      <div class="seg" id="wProv" style="margin-top:8px"><button data-v="onedrive">OneDrive</button><button data-v="google">Google Drive</button></div>
+      <div class="seg" id="wProv" style="margin-top:8px"><button data-v="onedrive">OneDrive</button><button data-v="google">Google Drive</button><button data-v="local">Cartella locale</button></div>
       <div id="wCodeBox" class="hidden">
         <label class="f">Codice dell'app (ID client)</label>
         <input type="text" id="wCode" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="te lo dà chi ha installato l'app">
@@ -191,11 +192,18 @@
       <button class="iconbtn" id="btnCompass" style="margin-top:8px">Attiva bussola</button>
     </div>
   </div>
+  <div class="sec-title">Rilievi eseguiti</div>
   <div class="card counters">
     <div><b id="cntTot">0</b><span>totale</span></div><div><b id="cntW">0</b><span>7 giorni</span></div>
     <div><b id="cntM">0</b><span>30 giorni</span></div><div><b id="cntY">0</b><span>12 mesi</span></div>
   </div>
   <button class="big" id="btnNew">+ Nuovo rilievo</button>
+  <div class="card hidden" id="zipReady">
+    <button class="iconbtn" id="btnZipClose" style="float:right;padding:6px 10px">×</button>
+    <b>File pronti da salvare</b>
+    <div class="muted" id="zipInfo"></div>
+    <button class="big" id="btnZipSave" style="margin-top:8px">Salva sul telefono</button>
+  </div>
   <div class="card" style="margin-top:12px">
     <div class="row" style="align-items:center">
       <div><b id="pendingCount">0</b> <span class="muted">rilievi in attesa di invio</span></div>
@@ -311,7 +319,7 @@
 <!-- LISTA -->
 <section id="list" class="screen">
   <header class="bar"><h1>Progetti</h1></header>
-  <div class="card" id="listBox"><div class="muted">Nessun progetto.</div></div>
+  <div class="card" id="listBox"></div>
 </section>
 
 <!-- PROGETTO -->
@@ -346,8 +354,8 @@
 <section id="settings" class="screen">
   <header class="bar"><h1>Impostazioni</h1></header>
   <div class="card">
-    <label class="f">Dove salvare</label>
-    <div class="seg" id="segProv"><button data-v="onedrive">OneDrive</button><button data-v="google">Google Drive</button></div>
+    <label class="f">Opzioni salvataggio</label>
+    <div class="seg" id="segProv"><button data-v="onedrive">OneDrive</button><button data-v="google">Google Drive</button><button data-v="local">Cartella locale</button></div>
     <div id="acctInfo" class="muted" style="margin-top:8px">Non collegato</div>
     <div class="row" style="margin-top:8px"><button class="big" id="btnLogin">Collega</button><button class="big sec hidden" id="btnLogout">Scollega</button></div>
     <label class="f">Cosa salvare per ogni progetto</label>
@@ -381,22 +389,22 @@
 </section>
 
 <nav class="tabs">
-  <button data-go="home" class="on"><span class="ic">🧭</span>Bussola</button>
+  <button data-go="home" class="on"><span class="ic">🏠</span>Home</button>
   <button data-go="list"><span class="ic">🗂️</span>Progetti</button>
   <button data-go="settings"><span class="ic">⚙️</span>Impostazioni</button>
 </nav>
 <div class="toast" id="toast"></div>
 <div id="errBanner" class="hidden"></div>
 
-<script src="config.js?v=0.4.0"></script>
-<script src="vendor/msal-browser.min.js?v=0.4.0"></script>
-<script src="vendor/piexif.js?v=0.4.0"></script>
-<script src="vendor/jszip.min.js?v=0.4.0"></script>
-<script src="vendor/docx.min.js?v=0.4.0"></script>
-<script src="vendor/qrcode.js?v=0.4.0"></script>
-<script src="vendor/leaflet.js?v=0.4.0"></script>
-<script src="arete.js?v=0.4.0"></script>
-<script src="output.js?v=0.4.0"></script>
-<script src="app.js?v=0.4.0"></script>
+<script src="config.js?v=0.4.1"></script>
+<script src="vendor/msal-browser.min.js?v=0.4.1"></script>
+<script src="vendor/piexif.js?v=0.4.1"></script>
+<script src="vendor/jszip.min.js?v=0.4.1"></script>
+<script src="vendor/docx.min.js?v=0.4.1"></script>
+<script src="vendor/qrcode.js?v=0.4.1"></script>
+<script src="vendor/leaflet.js?v=0.4.1"></script>
+<script src="arete.js?v=0.4.1"></script>
+<script src="output.js?v=0.4.1"></script>
+<script src="app.js?v=0.4.1"></script>
 </body>
 </html>
