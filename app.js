@@ -3,7 +3,7 @@
  * salvataggio offline (IndexedDB) e sincronizzazione su OneDrive (Microsoft Graph). */
 "use strict";
 
-const APP_VERSION = "0.4.2";
+const APP_VERSION = "0.4.3";
 const CFG = window.APP_CONFIG || {};
 // errori imprevisti: mostrati in rosso in alto, per capire subito cosa non va
 function showErr(msg) {
@@ -63,7 +63,7 @@ const DB = {
 };
 
 /* ---------------------------------------------------------- Settings */
-const S = { basemap: "osm", folder: "Rilievi", name: "", init: "", north: "T", decl: 3.5, quality: 2048, arrow: true,
+const S = { basemap: "osm", prjColors: {}, prjOff: [], folder: "Rilievi", name: "", init: "", north: "T", decl: 3.5, quality: 2048, arrow: true,
   provider: "", msClientId: "", gClientId: "", setupDone: false, areteOn: false,
   studio: "", qualifica: "", out: { schede: true, arete: true, foto: true, riepilogo: true, vettoriale: false } };
 async function loadSettings() {
@@ -236,6 +236,32 @@ const Basemap = {
 window.addEventListener("online", () => Basemap.applyAll());
 window.addEventListener("offline", () => Basemap.applyAll());
 
+/* --------------------------------------------------- Colori dei progetti sulla mappa */
+// Ogni progetto ha un colore (scelto in automatico, modificabile con un tocco dalla Mappa o dalla pagina del progetto).
+const PALETTE = ["#e53935", "#fb8c00", "#fdd835", "#43a047", "#00acc1", "#1e88e5", "#8e24aa", "#d81b60", "#6d4c41", "#ffffff"];
+const prjKey = (r) => r.lavoro || "(senza progetto)";
+function prjColor(name) {
+  if (S.prjColors && S.prjColors[name]) return S.prjColors[name];
+  let h = 0; for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return PALETTE[h % 8];
+}
+function setPrjColor(name, col) {
+  S.prjColors = { ...(S.prjColors || {}), [name]: col }; saveSettings();
+  MapView.plot(); ProjMap.plot();
+}
+// riga di pallini colorati: tocco = nuovo colore
+function swatches(name, onPick) {
+  const cur = prjColor(name);
+  return `<div class="swatches">${PALETTE.map((c) => `<button type="button" class="sw${c === cur ? " on" : ""}" data-c="${c}" style="background:${c}" aria-label="colore ${c}"></button>`).join("")}</div>`;
+}
+function bindSwatches(box, name, after) {
+  box.querySelectorAll(".sw").forEach((b) => b.addEventListener("click", (e) => {
+    e.stopPropagation(); setPrjColor(name, b.dataset.c);
+    box.querySelectorAll(".sw").forEach((x) => x.classList.toggle("on", x === b));
+    after && after(b.dataset.c);
+  }));
+}
+
 /* -------------------------------------------------------------- Mappa */
 // Leaflet + OpenStreetMap: gratuito, senza chiave. Pallino blu = posizione, cono = direzione della bussola,
 // pallini verdi = rilievi salvati.
@@ -280,12 +306,100 @@ const MapView = {
     if (!this.map) return;
     this.layer.clearLayers();
     (await DB.all()).filter((r) => r.posizione && r.posizione.lat).forEach((r) => {
-      L.circleMarker([r.posizione.lat, r.posizione.lon], { radius: 7, color: "#fff", weight: 2, fillColor: "#2e7d32", fillOpacity: 1 })
+      L.circleMarker([r.posizione.lat, r.posizione.lon], { radius: 7, color: "#333", weight: 1.5, fillColor: prjColor(prjKey(r)), fillOpacity: 1 })
         .bindTooltip(`${idLabel(r)}${r.specie ? " · " + r.specie : ""}`, { direction: "top" })
         .on("click", () => openDetail(r.id)).addTo(this.layer);
     });
   },
   refresh() { if (this.map) { setTimeout(() => this.map.invalidateSize(), 50); this.plot(); } },
+};
+
+/* ------------------------------------------------- Scheda Mappa: progetti come layer */
+// Elenco dei progetti con una spunta ciascuno: i progetti spuntati si "accendono" con il loro colore,
+// gli altri restano pallini grigi piccoli. Tocco su un pallino = scheda della pianta.
+const ProjMap = {
+  map: null, layer: null, meMk: null, open: null,
+  init() {
+    if (this.map || !window.L) return;
+    this.map = L.map("pmapMap", { zoomControl: false, attributionControl: true }).setView([41.9, 12.5], 6);
+    Basemap.attach(this.map);
+    this.layer = L.layerGroup().addTo(this.map);
+    // "Apri scheda" nel fumetto del pallino
+    this.map.on("popupopen", (e) => {
+      const b = e.popup.getElement().querySelector(".pop-open");
+      if (b) b.addEventListener("click", () => { this.map.closePopup(); openDetail(b.dataset.id); });
+    });
+    if (GPS.last) this.me(GPS.last);
+  },
+  me(f) {
+    if (!this.map || !f) return;
+    const ll = [f.lat, f.lon];
+    if (!this.meMk) this.meMk = L.circleMarker(ll, { radius: 7, color: "#fff", weight: 3, fillColor: "#1a73e8", fillOpacity: 1, interactive: false }).addTo(this.map);
+    else this.meMk.setLatLng(ll);
+  },
+  isOn(name) { return !(S.prjOff || []).includes(name); },
+  setOn(name, on) {
+    const off = new Set(S.prjOff || []); on ? off.delete(name) : off.add(name);
+    S.prjOff = [...off]; saveSettings(); this.plot();
+  },
+  async groups() {
+    const g = {};
+    (await DB.all()).forEach((r) => (g[prjKey(r)] = g[prjKey(r)] || []).push(r));
+    return g;
+  },
+  async plot() {
+    if (!this.map) return;
+    this.layer.clearLayers();
+    const g = await this.groups();
+    const names = Object.keys(g);
+    // prima gli spenti (sotto), poi gli accesi (sopra)
+    names.sort((a, b) => this.isOn(a) - this.isOn(b)).forEach((n) => {
+      const on = this.isOn(n), col = prjColor(n);
+      g[n].filter((r) => r.posizione && r.posizione.lat).forEach((r) => {
+        const m = L.circleMarker([r.posizione.lat, r.posizione.lon], on
+          ? { radius: 8, color: "#222", weight: 1.5, fillColor: col, fillOpacity: 1 }
+          : { radius: 4, color: "#777", weight: 1, fillColor: "#bbb", fillOpacity: 0.55 });
+        m.bindPopup(`<b>${esc(idLabel(r))}</b>${r.specie ? "<br>" + esc(r.specie) : ""}<br><span class="muted">${esc(n)}</span>
+          <br><button type="button" class="pop-open" data-id="${r.id}">Apri scheda</button>`);
+        m.addTo(this.layer);
+      });
+    });
+  },
+  async renderList() {
+    const g = await this.groups(), box = $("#pmapList");
+    const names = Object.keys(g).sort((x, y) => Math.max(...g[y].map((r) => r.createdAt)) - Math.max(...g[x].map((r) => r.createdAt)));
+    box.innerHTML = names.map((n, i) => `<div class="pl" data-i="${i}">
+        <label class="pl-row"><input type="checkbox" ${this.isOn(n) ? "checked" : ""}>
+          <span class="pl-name">${esc(n)}</span><span class="muted">${g[n].length}</span></label>
+        <button type="button" class="pl-col" style="background:${prjColor(n)}" aria-label="Cambia colore"></button>
+        <div class="pl-pal hidden">${swatches(n)}</div></div>`).join("");
+    box.querySelectorAll(".pl").forEach((el) => {
+      const n = names[+el.dataset.i];
+      el.querySelector("input").addEventListener("change", (e) => this.setOn(n, e.target.checked));
+      el.querySelector(".pl-col").addEventListener("click", () => {
+        const pal = el.querySelector(".pl-pal"), was = pal.classList.contains("hidden");
+        box.querySelectorAll(".pl-pal").forEach((x) => x.classList.add("hidden"));
+        if (was) pal.classList.remove("hidden");
+      });
+      bindSwatches(el.querySelector(".pl-pal"), n, (c) => { el.querySelector(".pl-col").style.background = c; el.querySelector(".pl-pal").classList.add("hidden"); });
+    });
+  },
+  async fit() {
+    const g = await this.groups(), pts = [];
+    Object.keys(g).filter((n) => this.isOn(n)).forEach((n) => g[n].forEach((r) => r.posizione && r.posizione.lat && pts.push([r.posizione.lat, r.posizione.lon])));
+    if (pts.length) this.map.fitBounds(pts, { padding: [30, 30], maxZoom: 19 });
+    else if (GPS.last) this.map.setView([GPS.last.lat, GPS.last.lon], 17);
+  },
+  async all(on) {
+    S.prjOff = on ? [] : Object.keys(await this.groups()); saveSettings();
+    this.renderList(); this.plot();
+  },
+  async show() {
+    this.init(); if (!this.map) return;
+    setTimeout(() => this.map.invalidateSize(), 60);
+    await this.renderList(); await this.plot();
+    if (!this.fitted) { this.fitted = true; this.fit(); }
+  },
 };
 
 /* --------------------------------------------------------------- GPS */
@@ -300,7 +414,7 @@ const GPS = {
         // la lettura migliore degli ultimi 60 s
         if (!this.best || fix.acc <= this.best.acc || fix.time - this.best.time > 60000) this.best = fix;
         updateGpsUI();
-        MapView.update(fix);
+        MapView.update(fix); ProjMap.me(fix);
         formMapFollowGps(fix);
       },
       (err) => gpsError(err),
@@ -1074,6 +1188,7 @@ async function openProject(name) {
     d.addEventListener("click", () => openDetail(r.id));
     box.appendChild(d);
   });
+  const pc = $("#prjColor"); pc.innerHTML = swatches(name); bindSwatches(pc, name);
   prjOut = { ...S.out };
   renderOutChecks($("#prjOut"), prjOut, (k, v) => { prjOut[k] = v; });
   $("#prjExportInfo").textContent = "";
@@ -1144,6 +1259,7 @@ function show(id) {
   $("nav.tabs").classList.toggle("hidden", id === "camera" || id === "welcome");
   if (id === "list") renderList();
   if (id === "home") MapView.refresh();
+  if (id === "pmap") ProjMap.show();
   if (id === "settings") renderSettings();
   window.scrollTo(0, 0);
 }
@@ -1229,6 +1345,9 @@ async function main() {
   ["fLavoro", "fNgs", "fNcart", "fNprog"].forEach((id) => $("#" + id).addEventListener("input", updateNamePreview));
   ["fNgs", "fNcart", "fNprog"].forEach((id) => $("#" + id).addEventListener("change", checkDuplicate));
   $("#btnPrjBack").addEventListener("click", () => show("list"));
+  $("#btnPmFit").addEventListener("click", () => ProjMap.fit());
+  $("#btnPmAll").addEventListener("click", () => ProjMap.all(true));
+  $("#btnPmNone").addEventListener("click", () => ProjMap.all(false));
   $("#btnPrjNew").addEventListener("click", () => { Compass.start(); openForm(currentProject); });
   $("#btnSavePos").addEventListener("click", saveDetailPos);
   $("#btnGpsFix").addEventListener("click", () => {
