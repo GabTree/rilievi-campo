@@ -3,7 +3,7 @@
  * salvataggio offline (IndexedDB) e sincronizzazione su OneDrive (Microsoft Graph). */
 "use strict";
 
-const APP_VERSION = "0.5.3";
+const APP_VERSION = "0.5.4";
 const CFG = window.APP_CONFIG || {};
 // errori imprevisti: mostrati in rosso in alto, per capire subito cosa non va
 function showErr(msg) {
@@ -1178,7 +1178,7 @@ const Sync = {
     const stale = (await staleProjects()).filter((n) => !only || only.projects.has(n));
     if (!pending.length && !stale.length) { if (manual) toast("Tutto sincronizzato"); setSyncInfo(`Tutto sincronizzato su ${P.name}`); return; }
     this.running = true;
-    let ok = 0, lastErr = "";
+    let ok = 0, lastErr = "", filesOk = 0;
     const touched = new Set();
     if (P === Local) Local.begin();
     for (const r of pending) {
@@ -1191,7 +1191,7 @@ const Sync = {
         ok++;
         await DB.put(r);
       } catch (e) {
-        r.status = "error"; r.error = lastErr = String(e.message || e);
+        r.status = "error"; r.error = lastErr = errIt(e);
         await DB.put(r);
         if (/scadut|Rinnovo|non collegato/.test(lastErr)) break;
       }
@@ -1204,13 +1204,17 @@ const Sync = {
         const base = `${safe(S.folder || "Rilievi")}/${await projectFolder(name)}`;
         for (const f of await projectFiles(name, S.out)) await P.upload(`${base}/${f.path}`, f.blob, manual);
         sigs[name] = await projSig(name);
-      } catch (e) { lastErr = String(e.message || e); }
+        filesOk++;
+      } catch (e) { lastErr = errIt(e); }
     }
     await DB.setKV("projSig", sigs);
     if (P === Local) await Local.finish();
     this.running = false;
     const left = (await DB.all()).filter((r) => r.status !== "synced" && !isTodo(r)).length;
-    setSyncInfo(left || lastErr ? `${ok} inviati${left ? ", " + left + " da reinviare" : ""}${lastErr ? " · " + lastErr : ""}` : `Sincronizzato su ${P.name} alle ${new Date().toLocaleTimeString("it-IT")}`);
+    const ora = new Date().toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" });
+    if (lastErr) setSyncInfo(`${ok ? ok + (ok === 1 ? " rilievo inviato" : " rilievi inviati") + ", " : ""}${left ? left + " da reinviare · " : ""}Errore: ${lastErr}`);
+    else if (!ok && filesOk) setSyncInfo(`Tabella e vettoriale aggiornati su ${P.name} alle ${ora}`);
+    else setSyncInfo(`Sincronizzato su ${P.name} alle ${ora}`);
     refreshCounts();
   },
   // "Crea / aggiorna i file scelti" dalla pagina del progetto: rifà tutto il progetto con le spunte scelte
@@ -1238,7 +1242,7 @@ const Sync = {
       if (o.riepilogo === !!S.out.riepilogo && o.vettoriale === !!S.out.vettoriale) { const sg = (await DB.getKV("projSig")) || {}; sg[name] = await projSig(name); await DB.setKV("projSig", sg); }
       info(`Fatto: ${base}`);
       toast("File del progetto aggiornati");
-    } catch (e) { info("Errore: " + (e.message || e)); }
+    } catch (e) { info("Errore: " + errIt(e)); }
     this.running = false;
     refreshCounts();
   },
@@ -1256,6 +1260,45 @@ async function staleProjects() {
   return out;
 }
 function setSyncInfo(t) { $("#syncInfo").textContent = t; }
+/* ------------------------------------------------- Controllo dei file dell'app (fase di sviluppo) */
+// Verifica che sul sito ci siano tutti i pezzi dell'app: se ne manca uno (es. un file non caricato su GitHub)
+// lo segnala in Impostazioni con il nome del file da ricaricare.
+const FILE_CHECK = {
+  libs: [["vendor/jszip.min.js", () => window.JSZip, "riepilogo Excel, ARETÉ, importazione, ZIP"],
+    ["vendor/docx.min.js", () => window.docx, "schede Word"],
+    ["vendor/leaflet.js", () => window.L, "mappe"],
+    ["vendor/piexif.js", () => window.piexif, "dati GPS e direzione nelle foto"],
+    ["vendor/msal-browser.min.js", () => window.msal, "accesso OneDrive"],
+    ["config.js", () => window.APP_CONFIG, "codici di OneDrive, Google ed Esri"]],
+  files: [["arete_lists.json", "elenchi ARETÉ e specie"], ["specie.json", "elenco delle specie"], ["brand/logo_orizzontale.png", "logo delle schede Word"],
+    ["modello/Modello_rilievi_GabTree.xlsx", "modello Excel da scaricare"], ["vendor/leaflet.css", "aspetto delle mappe"], ["install.js", "istruzioni di installazione"],
+    ["import.js", "importazione degli elenchi"], ["output.js", "schede, tabelle e vettoriale"], ["arete.js", "scheda ARETÉ"], ["manifest.webmanifest", "installazione"]],
+  missing: null,
+};
+async function checkAppFiles() {
+  const miss = FILE_CHECK.libs.filter(([, ok]) => !ok()).map(([f, , use]) => [f, use]);
+  if (navigator.onLine) {
+    await Promise.all(FILE_CHECK.files.map(async ([f, use]) => {
+      try { const r = await fetch(f + "?check=" + Date.now(), { method: "HEAD", cache: "no-store" }); if (!r.ok) miss.push([f, use]); }
+      catch (e) { /* rete instabile: non segnalo */ }
+    }));
+  }
+  FILE_CHECK.missing = miss;
+  const box = $("#fileCheck");
+  box.classList.toggle("hidden", !miss.length);
+  box.innerHTML = miss.length ? `<b>⚠️ Mancano dei file dell'app</b><div class="muted" style="margin-top:4px">Ricaricali su GitHub nella stessa cartella indicata:</div>
+    <ul class="ins-list">${miss.map(([f, use]) => `<li><code>${esc(f)}</code> – serve per: ${esc(use)}</li>`).join("")}</ul>` : "";
+  return miss;
+}
+// errori più comprensibili nella riga sotto «Sincronizza ora»
+function errIt(e) {
+  const m = String((e && e.message) || e || "");
+  if (/Can't find variable|is not defined|undefined is not|reading '/.test(m)) return "manca un file dell'app (vedi Impostazioni)";
+  if (/Failed to fetch|Load failed|NetworkError|network/i.test(m)) return "connessione assente o interrotta";
+  if (/QuotaExceeded|quota/i.test(m)) return "spazio esaurito sul telefono o nel cloud";
+  return m;
+}
+
 
 /* ----------------------------------------------------- Lista/dettaglio */
 async function refreshCounts() {
@@ -1532,6 +1575,7 @@ async function renderSettings() {
   let perm = "?";
   try { if (navigator.permissions) perm = (await navigator.permissions.query({ name: "geolocation" })).state; } catch (e) { /* Safari vecchi */ }
   const sw = navigator.serviceWorker && navigator.serviceWorker.controller ? "attivo" : "no";
+  checkAppFiles();
   $("#verInfo").innerHTML = `App ${APP_VERSION} · mappa ${window.L ? "ok" : "NON caricata"} · satellite ${Basemap.hasSat() ? "attivo" : "chiave mancante"} · posizione: ${perm} · ` +
     `ultimo GPS: ${GPS.last ? "±" + Math.round(GPS.last.acc) + " m" : "nessuno"} · offline: ${sw}`;
 }
@@ -1623,8 +1667,6 @@ async function main() {
   ["fNgs", "fNcart", "fNprog"].forEach((id) => $("#" + id).addEventListener("change", checkDuplicate));
   $("#btnPrjBack").addEventListener("click", () => show("list"));
   $("#btnPmFit").addEventListener("click", () => ProjMap.fit());
-  $("#btnPrjImport").addEventListener("click", () => Importer.open(currentProject));
-  $("#btnPmImport").addEventListener("click", () => Importer.open(""));
   $("#btnListImport").addEventListener("click", () => Importer.open(""));
   $("#btnPrjTodoDel").addEventListener("click", async () => {
     const todo = (await DB.all()).filter((r) => r.lavoro === currentProject && isTodo(r));
@@ -1722,7 +1764,7 @@ async function main() {
   });
 
   Install.render($("#wInstall"), { hideIfInstalled: true });
-  Install.render($("#sInstall"));
+  Install.render($("#sInstall"), { hideIfInstalled: true });
   // configurazione iniziale
   bindSeg("wProv", (v) => { S.provider = v; saveSettings(); wizardCode(); });
   $("#wName").addEventListener("change", (e) => { S.name = e.target.value.trim(); saveSettings(); });
@@ -1762,6 +1804,6 @@ async function main() {
   if (!S.setupDone) openWizard();
   refreshCounts();
   if (gBack) Sync.run(true);   // appena collegato (o rinnovato) l'accesso Google: invio quello che c'è
-  else setSyncInfo("L'invio al cloud parte solo con «Sincronizza ora»");
+  checkAppFiles().then((m) => { if (m.length) toast("Mancano dei file dell'app: vedi Impostazioni", 5000); });
 }
 main();

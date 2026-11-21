@@ -9,7 +9,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="RilieviCampo">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="stylesheet" href="vendor/leaflet.css?v=0.5.3">
+<link rel="stylesheet" href="vendor/leaflet.css?v=0.5.4">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="icon" href="icons/icon-192.png">
 <title>Rilievi di Campo-GabTree</title>
@@ -119,6 +119,8 @@
   .introw input { width: 22px; height: 22px; flex: 0 0 auto; }
   .introw select { flex: 0 0 auto; width: calc(100% - 32px); margin-left: 32px; font-size: 15px; padding: 8px; border-radius: 10px; border: 1px solid #cfd8d1; background: #fff; }
   .req.ok { visibility: hidden; }
+  .warnbox { border: 2px solid var(--rosso); }
+  .warnbox code { font-size: 14px; overflow-wrap: anywhere; }
   #btnSync.attn { background: var(--verde); color: #fff; }
   .item .selbox { width: 24px; height: 24px; flex: 0 0 auto; margin: 0 4px 0 0; pointer-events: none; }
   .item.sel { background: #e8f1ea; }
@@ -401,7 +403,6 @@
     <div class="pl-head"><label class="f" style="margin:0">Progetti</label>
       <span><button type="button" class="linkbtn" id="btnPmAll">Tutti</button> · <button type="button" class="linkbtn" id="btnPmNone">Nessuno</button></span></div>
     <div id="pmapList"></div>
-    <button class="big sec" id="btnPmImport" style="margin-top:10px">Importa piante da un elenco</button>
   </div>
 </section>
 
@@ -440,7 +441,6 @@
   <header class="bar"><button class="iconbtn" id="btnPrjBack">‹ Progetti</button><h1 id="prjTitle">Progetto</h1><button class="iconbtn" id="btnSelPrj">Seleziona</button></header>
   <div class="muted" id="prjProg" style="margin:-4px 0 8px"></div>
   <button class="big" id="btnPrjNew">+ Nuovo rilievo in questo progetto</button>
-  <button class="big sec" id="btnPrjImport" style="margin-top:8px">Importa piante da un elenco</button>
   <div class="card" style="margin-top:12px"><label class="f">Colore sulla mappa</label><div id="prjColor"></div></div>
   <div class="card" id="prjBox" style="margin-top:12px"></div>
   <button class="big sec" id="btnPrjReload">Ricarica tutto il progetto sul cloud</button>
@@ -467,6 +467,7 @@
 <!-- IMPOSTAZIONI -->
 <section id="settings" class="screen">
   <header class="bar"><h1>Impostazioni</h1></header>
+  <div class="card hidden warnbox" id="fileCheck"></div>
   <div class="card ins" id="sInstall"></div>
   <div class="card">
     <label class="f">Opzioni di salvataggio</label>
@@ -520,17 +521,17 @@
 <div class="toast" id="toast"></div>
 <div id="errBanner" class="hidden"></div>
 
-<script src="config.js?v=0.5.3"></script>
-<script src="vendor/msal-browser.min.js?v=0.5.3"></script>
-<script src="vendor/piexif.js?v=0.5.3"></script>
-<script src="vendor/jszip.min.js?v=0.5.3"></script>
-<script src="vendor/docx.min.js?v=0.5.3"></script>
-<script src="vendor/qrcode.js?v=0.5.3"></script>
-<script src="vendor/leaflet.js?v=0.5.3"></script>
-<script src="arete.js?v=0.5.3"></script>
-<script src="output.js?v=0.5.3"></script>
-<script src="install.js?v=0.5.3"></script>
-<script src="app.js?v=0.5.3"></script>
-<script src="import.js?v=0.5.3"></script>
+<script src="config.js?v=0.5.4"></script>
+<script src="vendor/msal-browser.min.js?v=0.5.4"></script>
+<script src="vendor/piexif.js?v=0.5.4"></script>
+<script src="vendor/jszip.min.js?v=0.5.4"></script>
+<script src="vendor/docx.min.js?v=0.5.4"></script>
+<script src="vendor/qrcode.js?v=0.5.4"></script>
+<script src="vendor/leaflet.js?v=0.5.4"></script>
+<script src="arete.js?v=0.5.4"></script>
+<script src="output.js?v=0.5.4"></script>
+<script src="install.js?v=0.5.4"></script>
+<script src="app.js?v=0.5.4"></script>
+<script src="import.js?v=0.5.4"></script>
 </body>
 </html>
