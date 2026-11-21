@@ -9,7 +9,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="RilieviCampo">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="stylesheet" href="vendor/leaflet.css?v=0.5.1">
+<link rel="stylesheet" href="vendor/leaflet.css?v=0.5.2">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="icon" href="icons/icon-192.png">
 <title>Rilievi di Campo-GabTree</title>
@@ -20,10 +20,12 @@
     --safe-top: env(safe-area-inset-top); --safe-bot: env(safe-area-inset-bottom);
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  html, body { margin: 0; height: 100%; font-family: -apple-system, system-ui, "Segoe UI", Roboto, Arial, sans-serif;
+  html { overscroll-behavior-y: none; }
+  html, body { max-width: 100%; overflow-x: hidden; }
+  html, body { margin: 0; min-height: 100vh; min-height: 100dvh; font-family: -apple-system, system-ui, "Segoe UI", Roboto, Arial, sans-serif;
     color: var(--testo); background: #f6f7f5; font-size: 17px; }
   button { font: inherit; }
-  .screen { display: none; min-height: 100%; padding: calc(12px + var(--safe-top)) 14px calc(90px + var(--safe-bot)); }
+  .screen { display: none; min-height: 100vh; min-height: 100dvh; padding: calc(12px + var(--safe-top)) 14px calc(90px + var(--safe-bot)); }
   .screen.active { display: block; }
   header.bar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
   header.bar h1 { font-size: 20px; margin: 0; flex: 1; color: var(--verde); }
@@ -109,6 +111,15 @@
   .imp-tab th:last-child, .imp-tab td:last-child { width: 40px; }
   .voce { margin: 0 0 10px 30px; }
   #fCpc { width: 100%; font-size: 17px; padding: 10px; border-radius: 10px; border: 1px solid #cfd8d1; background: #fff; }
+  .daterow { display: flex; gap: 8px; align-items: center; }
+  .daterow input { width: 60%; flex: 0 0 auto; }
+  .calbtn { border: 1px solid var(--bordo); background: #fff; border-radius: 12px; font-size: 22px; width: 52px; height: 48px; }
+  .introw { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 7px 0; border-bottom: 1px solid #eee; }
+  .introw label { flex: 1; display: flex; align-items: center; gap: 10px; font-size: 16px; min-width: 0; }
+  .introw input { width: 22px; height: 22px; flex: 0 0 auto; }
+  .introw select { flex: 0 0 auto; width: calc(100% - 32px); margin-left: 32px; font-size: 15px; padding: 8px; border-radius: 10px; border: 1px solid #cfd8d1; background: #fff; }
+  .req.ok { visibility: hidden; }
+  #nameprev, #dupWarn, #formWho { overflow-wrap: anywhere; }
   .mapbtn.follow { background: var(--verde); color: #fff; }
   .needle-fixed { position: absolute; left: 50%; top: -6px; transform: translateX(-50%); width: 0; height: 0;
     border-left: 10px solid transparent; border-right: 10px solid transparent; border-top: 18px solid var(--rosso); }
@@ -136,7 +147,7 @@
 
   /* Fotocamera */
   #camera { padding: 0; background: #000; color: #fff; }
-  #camera.active { display: flex; flex-direction: column; height: 100%; }
+  #camera.active { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
   .cam-view { position: relative; flex: 1; overflow: hidden; }
   .cam-view video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
   .cam-top { position: absolute; top: calc(10px + var(--safe-top)); left: 10px; right: 10px; display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
@@ -251,19 +262,19 @@
 
   <div class="card">
     <label class="f">Data della valutazione</label>
-    <input type="date" id="fData">
+    <div class="daterow"><input type="date" id="fData"><button type="button" class="calbtn" id="btnCal" aria-label="Scegli dal calendario">📅</button></div>
     <label class="f">Progetto (cliente / località) <span class="req">*</span></label>
     <input type="text" id="fLavoro" list="lavoriList" placeholder="es. Parco Rossi – Comune X" autocomplete="off">
     <datalist id="lavoriList"></datalist>
   </div>
 
   <div class="card">
+    <label class="f">Id pianta <span class="req" id="idReq">*</span></label>
     <div class="row">
       <div><label class="f">N. gs</label><input type="text" inputmode="numeric" id="fNgs"></div>
       <div><label class="f">N. cart</label><input type="text" inputmode="numeric" id="fNcart"></div>
       <div><label class="f">N. progr.</label><input type="number" inputmode="numeric" id="fNprog"></div>
     </div>
-    <div class="muted" style="margin-top:6px">Serve almeno un numero. <a href="#" id="lnkProg"></a></div>
     <div class="muted" id="nameprev" style="margin-top:8px"></div>
     <div class="muted warn hidden" id="dupWarn" style="margin-top:6px"></div>
   </div>
@@ -312,31 +323,10 @@
       <div id="areteMissing" class="muted hidden" style="margin-top:8px">Per compilare la scheda ARETÉ carica prima il modello in <b>Impostazioni</b>.</div>
       <div id="areteBox"></div>
     </div>
-    <label class="f">Interventi</label>
-    <textarea id="fInt" placeholder="Interventi proposti"></textarea>
-  </div>
-
-  <div class="card" id="boxVoci">
-    <label class="f">Altre voci</label>
-    <label class="f chk"><input type="checkbox" id="fStrumOn"> Indagine strumentale</label>
-    <div id="strumFields" class="voce hidden">
-      <label class="f">Tipo di strumentale</label>
-      <input type="text" id="fStrum" list="strumList" autocomplete="off" placeholder="es. resistografo">
-      <datalist id="strumList"><option value="Resistografo"><option value="Tomografo sonico"><option value="Tomografo elettrico"><option value="Prova di trazione"></datalist>
-      <label class="f">Esito della prova (rischio)</label>
-      <div class="seg" id="segEsito"><button data-v="Basso">Basso</button><button data-v="Medio">Medio</button><button data-v="Alto">Alto</button></div>
-      <label class="f">Note</label>
-      <textarea id="fStrumNote"></textarea>
-      <label class="f">Allegati (grafici o file dello strumento)</label>
-      <input type="file" id="fAllegati" multiple>
-      <div class="muted" id="allegatiInfo"></div>
-    </div>
-    <label class="f chk"><input type="checkbox" id="fPotOn" data-box="potBox"> Potatura</label>
-    <div id="potBox" class="voce hidden"><textarea id="fPotNote" placeholder="Note sulla potatura"></textarea></div>
-    <label class="f chk"><input type="checkbox" id="fScavoOn" data-box="scavoBox"> Scavo</label>
-    <div id="scavoBox" class="voce hidden"><textarea id="fScavoNote" placeholder="Note sullo scavo"></textarea></div>
-    <label class="f chk"><input type="checkbox" id="fAltroOn" data-box="altroBox"> Altro</label>
-    <div id="altroBox" class="voce hidden"><textarea id="fAltroNote" placeholder="Note"></textarea></div>
+    <label class="f">Interventi proposti</label>
+    <div id="intList"></div>
+    <label class="f">Note sugli interventi</label>
+    <textarea id="fInt" placeholder="Facoltativo"></textarea>
   </div>
 
   <button class="big" id="btnSave">Salva rilievo</button>
@@ -364,7 +354,15 @@
 <!-- LISTA -->
 <section id="list" class="screen">
   <header class="bar"><h1>Progetti</h1></header>
-  <button class="big sec" id="btnListImport">Importa piante da un elenco</button>
+  <div class="row">
+    <button class="big" id="btnNewPrj">+ Nuovo progetto</button>
+    <button class="big sec" id="btnListImport">Importa elenco</button>
+  </div>
+  <div class="card hidden" id="newPrjBox" style="margin-top:12px">
+    <label class="f">Nome del nuovo progetto</label>
+    <input type="text" id="newPrjName" placeholder="es. Villa Borghese – Comune di Roma" autocomplete="off">
+    <div class="row" style="margin-top:8px"><button class="big" id="btnNewPrjOk">Crea</button><button class="big sec" id="btnNewPrjNo">Annulla</button></div>
+  </div>
   <div class="card" id="listBox" style="margin-top:12px"></div>
 </section>
 
@@ -437,6 +435,7 @@
     <div class="muted">Trascina il pallino verde per correggere la posizione.</div>
     <button class="big hidden" id="btnSavePos" style="margin-top:8px">Salva nuova posizione</button></div>
   <div class="card"><div class="thumbs" id="detThumbs"></div></div>
+  <button class="big" id="btnEdit" style="margin-bottom:8px">Modifica rilievo</button>
   <div class="row">
     <button class="big sec" id="btnShare">Condividi file</button>
     <button class="big sec" id="btnDelete" style="color:var(--rosso)">Elimina</button>
@@ -490,16 +489,16 @@
 <div class="toast" id="toast"></div>
 <div id="errBanner" class="hidden"></div>
 
-<script src="config.js?v=0.5.1"></script>
-<script src="vendor/msal-browser.min.js?v=0.5.1"></script>
-<script src="vendor/piexif.js?v=0.5.1"></script>
-<script src="vendor/jszip.min.js?v=0.5.1"></script>
-<script src="vendor/docx.min.js?v=0.5.1"></script>
-<script src="vendor/qrcode.js?v=0.5.1"></script>
-<script src="vendor/leaflet.js?v=0.5.1"></script>
-<script src="arete.js?v=0.5.1"></script>
-<script src="output.js?v=0.5.1"></script>
-<script src="app.js?v=0.5.1"></script>
-<script src="import.js?v=0.5.1"></script>
+<script src="config.js?v=0.5.2"></script>
+<script src="vendor/msal-browser.min.js?v=0.5.2"></script>
+<script src="vendor/piexif.js?v=0.5.2"></script>
+<script src="vendor/jszip.min.js?v=0.5.2"></script>
+<script src="vendor/docx.min.js?v=0.5.2"></script>
+<script src="vendor/qrcode.js?v=0.5.2"></script>
+<script src="vendor/leaflet.js?v=0.5.2"></script>
+<script src="arete.js?v=0.5.2"></script>
+<script src="output.js?v=0.5.2"></script>
+<script src="app.js?v=0.5.2"></script>
+<script src="import.js?v=0.5.2"></script>
 </body>
 </html>

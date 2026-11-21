@@ -170,6 +170,22 @@ const ARETE = (() => {
     box.querySelectorAll('select[data-a$="_tA"], select[data-a$="_tR"]').forEach((s) => s.dispatchEvent(new Event("change")));
   }
 
+  // rimette nella scheda i valori salvati (per riaprire un rilievo e modificarlo)
+  function fill(box, a) {
+    if (!a) return;
+    reset(box, {});
+    const np = Object.keys(a).reduce((m, k) => { const x = k.match(/^pr(\d+)_/); return x ? Math.max(m, +x[1] + 1) : m; }, 0);
+    for (let i = 0; i < np; i++) box.querySelector("#addPresc").click();
+    const setv = (e, v) => { if (e.type === "checkbox") e.checked = !!v; else e.value = v ?? ""; };
+    // prima i tipi di bersaglio (da cui dipendono le frequenze), poi tutto il resto
+    box.querySelectorAll('[data-a$="_tA"], [data-a$="_tR"]').forEach((e) => { setv(e, a[e.dataset.a]); e.dispatchEvent(new Event("change")); });
+    box.querySelectorAll("[data-a]").forEach((e) => { if (e.dataset.a in a) { setv(e, a[e.dataset.a]); e.dispatchEvent(new Event("change")); } });
+    Object.entries(a.difetti || {}).forEach(([z, rows]) => {
+      const cont = box.querySelector(`.zone[data-zone="${z}"]`);
+      if (cont) rows.forEach((r) => cont.appendChild(defectRow(z, r.d, r.g)));
+    });
+  }
+
   function collect(box) {
     const a = {};
     box.querySelectorAll("[data-a]").forEach((e) => {
@@ -323,5 +339,5 @@ const ARETE = (() => {
     L = await (await fetch("arete_lists.json")).json();
   }
 
-  return { init, build, reset, collect, makeXlsx, checkTemplate, specie: () => (L ? L.specie : []) };
+  return { init, build, reset, fill, collect, makeXlsx, checkTemplate, specie: () => (L ? L.specie : []) };
 })();

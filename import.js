@@ -21,13 +21,8 @@ const Importer = (() => {
     ["lat", "Latitudine", /^lat|latitud|^y$/],
     ["lon", "Longitudine", /^lon|^lng|longitud|^x$/],
     ["prob", "Note di campo", /note di campo|problemat|osservaz|difett|^note$|descri/],
-    ["int", "Interventi", /interv/],
-    ["strum", "Tipo di strumentale", /tipo di strument|^strument|prova strum|^prova$/],
-    ["esito", "Esito della prova", /esito/],
-    ["strumNote", "Note strumentale", /note strument/],
-    ["pot", "Potatura (note)", /potatur/],
-    ["scavo", "Scavo (note)", /scav|sorveglianza/],
-    ["altro", "Altro (note)", /^altro/],
+    ["intProp", "Interventi proposti", /interventi propost|^interventi$|^lavori/],
+    ["int", "Note sugli interventi", /note sugli interv|note interv|^note lavori/],
     ["foto", "Foto (nomi dei file)", /foto|immagin|photo|picture/],
   ];
   const IMG = /\.(jpe?g|png|heic|heif|webp)$/i;
@@ -195,6 +190,20 @@ const Importer = (() => {
       .sort((a, b) => a.name.localeCompare(b.name, "it", { numeric: true }));
   }
 
+  // "Scavo: entro 90 giorni; Prova di trazione (tra 1 anno)" → [{nome, tempo}]; ciò che non riconosco va nelle note
+  function parseInterventi(txt) {
+    const list = [], extra = [];
+    String(txt || "").split(/[;\n]+/).map((x) => x.trim()).filter(Boolean).forEach((part) => {
+      const p = norm(part);
+      const nome = INTERVENTI.slice().sort((a, b) => b.length - a.length).find((n) => p.includes(norm(n)));
+      const tempo = TEMPI.find((t) => p.includes(norm(t))) || "";
+      if (nome && !list.some((x) => x.nome === nome)) list.push({ nome, tempo });
+      else if (!nome) extra.push(part);
+    });
+    list.sort((a, b) => INTERVENTI.indexOf(a.nome) - INTERVENTI.indexOf(b.nome));
+    return { list, extra: extra.join("; ") };
+  }
+
   /* --------------------------------------------------------------------- interfaccia */
   function open(project) {
     startProject = project || "";
@@ -286,19 +295,15 @@ const Importer = (() => {
       const tipo = "Valutazione";
       const prot = /aret/i.test(d.protocollo || "") ? "ARETE" : "SIA";
       const cpcM = String(d.cpc || "").toUpperCase().replace(/\s+/g, "").match(/^(C\/D|A|B|C|D)$/);
-      const esito = (d.esito || "").toLowerCase().startsWith("a") ? "Alto" : (d.esito || "").toLowerCase().startsWith("m") ? "Medio" : (d.esito || "").toLowerCase().startsWith("b") ? "Basso" : "";
+      const ip = parseInterventi(d.intProp);
       Object.assign(rec, {
         lavoro: (map.indexOf("progetto") >= 0 && d.progetto) || project, dataValutazione: parseDate(d.data) || (mode === "todo" ? "" : isoToday()),
         tipoValutazione: tipo, ngs: cleanNum(d.ngs), ncart: cleanNum(d.ncart), nprog: cleanNum(d.nprog), specie: d.specie || "",
         diametro120: (d.diam || "").replace(",", "."), altezza: (d.alt || "").replace(",", "."), problematiche: d.prob || "", note: "",
-        interventi: d.int || "", strumento: d.strum || "", esitoProva: esito, strumNote: d.strumNote || "",
+        interventi: [d.int, ip.extra].filter(Boolean).join("\n"), interventiProposti: ip.list,
         protocollo: prot, cpc: prot === "SIA" && cpcM ? cpcM[1] : "",
-        potOn: !!d.pot, potNote: d.pot && !/^(s[iì]|x|1)$/i.test(d.pot) ? d.pot : "",
-        scavoOn: !!d.scavo, scavoNote: d.scavo && !/^(s[iì]|x|1)$/i.test(d.scavo) ? d.scavo : "",
-        altroOn: !!d.altro, altroNote: d.altro && !/^(s[iì]|x|1)$/i.test(d.altro) ? d.altro : "",
         operatore: S.name, iniziali: (S.init || "XX").toUpperCase(), appVersion: APP_VERSION, importato: srcName || "testo incollato",
       });
-      rec.strumOn = !!(rec.strumento || rec.esitoProva || rec.strumNote);
       rec.posizione = pos && !pos.err ? { lat: pos.lat, lon: pos.lon, acc: null, importata: true } : null;
       btn.textContent = `Importo ${n + 1}…`;
       for (const f of ph) {

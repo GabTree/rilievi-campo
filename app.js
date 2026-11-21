@@ -3,7 +3,7 @@
  * salvataggio offline (IndexedDB) e sincronizzazione su OneDrive (Microsoft Graph). */
 "use strict";
 
-const APP_VERSION = "0.5.1";
+const APP_VERSION = "0.5.2";
 const CFG = window.APP_CONFIG || {};
 // errori imprevisti: mostrati in rosso in alto, per capire subito cosa non va
 function showErr(msg) {
@@ -613,20 +613,38 @@ function formMapFollowGps(f) {
 }
 
 /* --------------------------------------------------------- Scheda */
+// interventi proposti (in ordine alfabetico) e tempi di prescrizione
+const INTERVENTI = ["Ampliamento formella", "Potatura di contenimento", "Potatura di risanamento", "Prova di trazione", "Resistografia base",
+  "Resistografia in quota", "Scavo", "Tomografia base", "Tomografia in quota"];
+const TEMPI = ["entro 90 giorni", "entro 365 giorni", "tra 6 mesi", "tra 1 anno", "tra 2 anni", "tra 3 anni", "tra 4 anni"];
+function renderInterventi(sel = []) {
+  const box = $("#intList");
+  box.innerHTML = INTERVENTI.map((n, i) => {
+    const cur = sel.find((x) => x.nome === n);
+    return `<div class="introw"><label><input type="checkbox" data-i="${i}"${cur ? " checked" : ""}> ${esc(n)}</label>
+      <select data-i="${i}" class="${cur ? "" : "hidden"}"><option value="">— tempi di prescrizione —</option>${TEMPI.map((t) => `<option${cur && cur.tempo === t ? " selected" : ""}>${t}</option>`).join("")}</select></div>`;
+  }).join("");
+  box.querySelectorAll("input").forEach((c) => c.addEventListener("change", () => box.querySelector(`select[data-i="${c.dataset.i}"]`).classList.toggle("hidden", !c.checked)));
+}
+function readInterventi() {
+  return [...$("#intList").querySelectorAll("input:checked")].map((c) => ({ nome: INTERVENTI[+c.dataset.i], tempo: $("#intList").querySelector(`select[data-i="${c.dataset.i}"]`).value }));
+}
+// testo per schede e tabelle: "Scavo (entro 90 giorni); Prova di trazione (tra 1 anno)"
+const intTxt = (r) => (r.interventiProposti || []).map((x) => x.nome + (x.tempo ? ` (${x.tempo})` : "")).join("; ");
+function updateIdReq() { $("#idReq").classList.toggle("ok", !!($("#fNgs").value.trim() || $("#fNcart").value.trim() || $("#fNprog").value.trim())); }
+let editingId = null;
 async function openForm(project) {
   if (!S.name || !S.init) { toast("Prima inserisci il nome del rilevatore e le iniziali"); openWizard(); return; }
   draft = newDraft();
   const last = (await DB.getKV("lastLavoro")) || {};
-  ["fNgs", "fNcart", "fNprog", "fSpecie", "fDiam", "fAlt", "fProb", "fInt", "fStrum", "fStrumNote", "fPotNote", "fScavoNote", "fAltroNote", "fCpc"].forEach((i) => ($("#" + i).value = ""));
-  ["fPotOn", "fScavoOn", "fAltroOn"].forEach((i) => { $("#" + i).checked = false; $("#" + $("#" + i).dataset.box).classList.add("hidden"); });
-  $("#fAllegati").value = ""; $("#allegatiInfo").textContent = "";
+  editingId = null; $("#form header h1").textContent = "Nuovo rilievo";
+  ["fNgs", "fNcart", "fNprog", "fSpecie", "fDiam", "fAlt", "fProb", "fInt", "fCpc"].forEach((i) => ($("#" + i).value = ""));
+  renderInterventi([]); updateIdReq();
   $("#fData").value = draft.dataValutazione;
   $("#fLavoro").value = project || last.lavoro || "";
   $("#formWho").textContent = `Rilevatore: ${S.name} (${S.init})`;
   draft.tipoValutazione = "Valutazione";
-  $("#fStrumOn").checked = false; $("#strumFields").classList.add("hidden"); setSeg("segEsito", "");
   updateNamePreview();
-  await suggestProgressivo();
   GPS.fixed = null; GPS.best = null; GPS.start();
   $("#gpsInfo").textContent = "In attesa del GPS…";
   $("#formMapHint").textContent = "Se il GPS non è preciso, trascina il pallino verde sull'albero.";
@@ -642,29 +660,25 @@ async function openForm(project) {
   setTimeout(() => { const f = GPS.current(); if (f) { updateGpsUI(); formMapFollowGps(f); } }, 150);
   updateNamePreview();
 }
-// Pianta "da fare": apre la scheda già compilata con i dati importati (posizione dal file, modificabile)
-async function completeTodo(id) {
-  const t = await DB.get(id);
-  if (!t) return;
+// Apre la scheda già compilata: pianta "da fare" importata da un elenco, oppure rilievo esistente da modificare
+async function loadIntoForm(t, edit) {
   await openForm(t.lavoro);
   if (!draft) return;
-  draft = { ...draft, ...t, id: t.id, createdAt: Date.now(), status: "pending", foto: t.foto || [], allegati: t.allegati || [], daElenco: true };
+  draft = { ...draft, ...t, id: t.id, createdAt: edit ? t.createdAt : Date.now(), status: "pending", foto: t.foto || [], allegati: t.allegati || [], daElenco: !edit };
   delete draft.posizione;
+  if (edit) { editingId = t.id; $("#form header h1").textContent = "Modifica rilievo"; }
   const set = (i, v) => ($("#" + i).value = v ?? "");
   set("fNgs", t.ngs); set("fNcart", t.ncart); set("fNprog", t.nprog); set("fSpecie", t.specie); set("fDiam", t.diametro120); set("fAlt", t.altezza);
-  set("fProb", t.problematiche); set("fInt", t.interventi); set("fStrum", t.strumento); set("fStrumNote", t.strumNote); set("fCpc", t.cpc);
-  [["fPotOn", "fPotNote", "pot"], ["fScavoOn", "fScavoNote", "scavo"], ["fAltroOn", "fAltroNote", "altro"]].forEach(([c, n, k]) => {
-    const on = !!(t[k + "On"] || t[k + "Note"]); $("#" + c).checked = on; set(n, t[k + "Note"]); $("#" + $("#" + c).dataset.box).classList.toggle("hidden", !on);
-  });
-  if (t.protocollo) await setProtocollo(t.protocollo);
-  if (t.dataValutazione) set("fData", t.dataValutazione); else set("fData", isoToday());
+  set("fProb", t.problematiche); set("fInt", t.interventi); set("fCpc", t.cpc);
+  renderInterventi(t.interventiProposti || []); updateIdReq();
+  await setProtocollo(t.protocollo || (edit ? "SIA" : S.protocollo === "ARETE" ? "ARETE" : "SIA"));
+  if (edit && t.arete && window.ARETE_READY) ARETE.fill($("#areteBox"), t.arete);
+  set("fData", t.dataValutazione || isoToday());
   draft.tipoValutazione = "Valutazione";
-  const strum = !!(t.strumOn || t.strumento || t.esitoProva || t.strumNote);
-  $("#fStrumOn").checked = strum; $("#strumFields").classList.toggle("hidden", !strum); setSeg("segEsito", t.esitoProva || "");
   if (hasPos(t)) {
-    draft.posManuale = { lat: t.posizione.lat, lon: t.posizione.lon };
+    draft.posManuale = { lat: t.posizione.lat, lon: t.posizione.lon, keep: edit ? t.posizione : null };
     formMap.set(t.posizione.lat, t.posizione.lon, true); formMap._centered = true;
-    $("#formMapHint").innerHTML = 'Posizione presa dall\'elenco importato. <a href="#" id="lnkBackGps">Usa la mia posizione GPS</a>';
+    $("#formMapHint").innerHTML = (edit ? "Posizione salvata nel rilievo. " : "Posizione presa dall'elenco importato. ") + '<a href="#" id="lnkBackGps">Usa la mia posizione GPS</a>';
     $("#lnkBackGps").addEventListener("click", (e) => {
       e.preventDefault(); draft.posManuale = null;
       $("#formMapHint").textContent = "Se il GPS non è preciso, trascina il pallino verde sull'albero.";
@@ -673,6 +687,8 @@ async function completeTodo(id) {
   }
   renderThumbs(); updateNamePreview(); checkDuplicate();
 }
+async function completeTodo(id) { const t = await DB.get(id); if (t) await loadIntoForm(t, false); }
+async function editRecord(id) { const t = await DB.get(id); if (t) await loadIntoForm(t, true); }
 // protocollo di valutazione: SIA (scelta della CPC) oppure ARETÉ (scheda ARETÉ)
 async function setProtocollo(v) {
   setSeg("segProtocollo", v);
@@ -684,18 +700,9 @@ async function setProtocollo(v) {
   $("#areteBox").classList.toggle("hidden", !tpl);
 }
 
-// propone il prossimo progressivo del progetto (si usa con un tocco)
-async function suggestProgressivo() {
-  const lav = $("#fLavoro").value.trim().toLowerCase();
-  const all = await DB.all();
-  const max = all.filter((r) => (r.lavoro || "").toLowerCase() === lav && r.nprog).reduce((m, r) => Math.max(m, Number(r.nprog) || 0), 0);
-  const a = $("#lnkProg");
-  a.textContent = `Usa il progressivo ${max + 1}`;
-  a.onclick = (e) => { e.preventDefault(); $("#fNprog").value = max + 1; updateNamePreview(); checkDuplicate(); };
-}
 async function fillLavori() {
   const all = await DB.all();
-  const names = [...new Set(all.map((r) => r.lavoro).filter(Boolean))];
+  const names = [...new Set([...all.map((r) => r.lavoro), ...((await DB.getKV("projects")) || [])].filter(Boolean))];
   $("#lavoriList").innerHTML = names.map((n) => `<option value="${esc(n)}">`).join("");
 }
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -748,11 +755,7 @@ async function saveForm() {
   Object.assign(r, {
     dataValutazione: v("fData") || isoToday(), lavoro: v("fLavoro"), ngs: v("fNgs"), ncart: v("fNcart"), nprog: v("fNprog"), specie: v("fSpecie"),
     diametro120: v("fDiam"), altezza: v("fAlt"), problematiche: v("fProb"), note: "", interventi: v("fInt"),
-    tipoValutazione: "Valutazione", protocollo: r.protocollo || "SIA",
-    strumOn: $("#fStrumOn").checked, strumNote: $("#fStrumOn").checked ? v("fStrumNote") : "",
-    potOn: $("#fPotOn").checked, potNote: $("#fPotOn").checked ? v("fPotNote") : "",
-    scavoOn: $("#fScavoOn").checked, scavoNote: $("#fScavoOn").checked ? v("fScavoNote") : "",
-    altroOn: $("#fAltroOn").checked, altroNote: $("#fAltroOn").checked ? v("fAltroNote") : "",
+    tipoValutazione: "Valutazione", protocollo: r.protocollo || "SIA", interventiProposti: readInterventi(),
     operatore: S.name, iniziali: (S.init || "XX").toUpperCase(), appVersion: APP_VERSION,
   });
   const err = [];
@@ -762,13 +765,16 @@ async function saveForm() {
 
   const f = GPS.current();
   const gps = f ? { lat: f.lat, lon: f.lon, acc: f.acc, alt: f.alt, time: f.time, fissata: !!GPS.fixed } : null;
-  r.strumento = r.strumOn ? v("fStrum") : "";
-  if (!r.strumOn) r.esitoProva = "";
-  r.posizione = r.posManuale ? { lat: r.posManuale.lat, lon: r.posManuale.lon, acc: null, manuale: true, gps } : gps;
-  // nome univoco: se esiste già lo stesso nome aggiunge -2, -3…
-  const base = nomeRilievo(r), used = new Set((await DB.all()).map((x) => x.cartella));
+  const pm = r.posManuale;
+  if (pm && pm.keep && pm.keep.lat === pm.lat && pm.keep.lon === pm.lon) r.posizione = pm.keep; // modifica: posizione invariata
+  else r.posizione = pm ? { lat: pm.lat, lon: pm.lon, acc: null, manuale: true, gps } : gps;
+  delete r.posManuale;
+  // nome univoco: se esiste già lo stesso nome aggiunge -2, -3… (in modifica resta quello di prima se i dati del nome non cambiano)
+  const oldName = editingId ? r.cartella : "";
+  const base = nomeRilievo(r), used = new Set((await DB.all()).filter((x) => x.id !== r.id).map((x) => x.cartella));
   let name = base, k = 2;
-  while (used.has(name)) name = `${base}-${k++}`;
+  if (oldName && oldName.replace(/-\d+$/, "") === base && !used.has(oldName)) name = oldName;
+  else while (used.has(name)) name = `${base}-${k++}`;
   r.cartella = name;
   r.foto.forEach((p, i) => {
     const n = String(i + 1).padStart(2, "0");
@@ -784,14 +790,18 @@ async function saveForm() {
     catch (e) { $("#formErr").textContent = "Errore nella scheda ARETÉ: " + e.message; return; }
     if (r.arete.ubicaz) await DB.setKV("areteRemember", { ubicaz: r.arete.ubicaz });
   }
-  r.status = "pending"; delete r.daElenco;
+  r.status = "pending"; delete r.daElenco; r.error = "";
+  if (editingId) r.modificatoIl = Date.now();
   await DB.put(r);
   await DB.setKV("lastLavoro", { lavoro: r.lavoro });
   S.protocollo = r.protocollo; saveSettings();
+  const wasEdit = editingId; editingId = null;
   draft = null;
   GPS.fixed = null;
-  toast("Rilievo salvato: " + r.cartella, 3500);
-  show("home");
+  if (wasEdit) {
+    toast(oldName && oldName !== r.cartella ? "Rilievo modificato. Ha un nome nuovo: i file con il vecchio nome restano nel cloud." : "Rilievo modificato", 4500);
+    openDetail(r.id);
+  } else { toast("Rilievo salvato: " + r.cartella, 3500); show("home"); }
   refreshCounts();
   Sync.run();
 }
@@ -1232,9 +1242,10 @@ const STATO = { pending: ["in attesa", "pending"], synced: ["inviato", "synced"]
 async function renderList() {
   const all = await DB.all();
   const box = $("#listBox");
-  if (!all.length) { box.innerHTML = ""; return; }
   const groups = {};
   all.forEach((r) => { const k = r.lavoro || "(senza progetto)"; (groups[k] = groups[k] || []).push(r); });
+  const empty = ((await DB.getKV("projects")) || []).filter((n) => !groups[n]);
+  box.classList.toggle("hidden", !all.length && !empty.length);
   const names = Object.keys(groups).sort((x, y) => Math.max(...groups[y].map((r) => r.createdAt)) - Math.max(...groups[x].map((r) => r.createdAt)));
   box.innerHTML = "";
   names.forEach((n) => {
@@ -1248,6 +1259,13 @@ async function renderList() {
       <span class="badge ${todo ? "todo" : pend ? "pending" : "synced"}">${todo ? todo + " da fare" : pend ? pend + " da inviare" : "inviato"}</span>`;
     d.addEventListener("click", () => openProject(n));
     box.appendChild(d);
+  });
+  empty.reverse().forEach((n) => {
+    const d = document.createElement("div");
+    d.className = "item";
+    d.innerHTML = `<img src="icons/icon-192.png"><div class="t"><b>${esc(n)}</b><span class="muted">nuovo progetto · nessuna pianta</span></div>`;
+    d.addEventListener("click", () => openProject(n));
+    box.prepend(d);
   });
 }
 let currentProject = null;
@@ -1265,8 +1283,9 @@ async function openProject(name) {
     const d = document.createElement("div");
     d.className = "item";
     const st = STATO[r.status] || ["", ""];
-    d.innerHTML = `<img src="${r.foto[0] ? URL.createObjectURL(r.foto[0].thumb) : "icons/icon-192.png"}"><div class="t"><b>${esc(idLabel(r))}${r.specie ? " · " + esc(r.specie) : ""}</b>
-      <span class="muted">${esc(isTodo(r) ? (r.strumento || "tocca per completare il rilievo") : r.cartella)}</span></div><span class="badge ${st[1]}">${st[0]}</span>`;
+    const classe = isTodo(r) ? "tocca per completare il rilievo" : r.protocollo === "ARETE" ? "Protocollo ARETÉ" : r.cpc ? "Classe " + r.cpc : "Classe —";
+    d.innerHTML = `<img src="${r.foto[0] ? URL.createObjectURL(r.foto[0].thumb) : "icons/icon-192.png"}"><div class="t"><b>${esc(numeri(r).join(" · ") || "—")}</b>
+      <span class="muted">${esc(classe)}</span></div><span class="badge ${st[1]}">${st[0]}</span>`;
     d.addEventListener("click", () => (isTodo(r) ? completeTodo(r.id) : openDetail(r.id)));
     box.appendChild(d);
   });
@@ -1285,13 +1304,14 @@ async function openDetail(id) {
   detPos = null;
   $("#btnSavePos").classList.add("hidden");
   const r = current, p = r.posizione || {};
-  $("#detTitle").textContent = `${idLabel(r)} · ${TIPO_NOME[r.tipoValutazione] || r.tipoValutazione}`;
+  $("#detTitle").textContent = idLabel(r);
   const pos = p.lat ? `${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}` + (p.manuale ? " (corretta a mano)" : p.acc ? ` (±${Math.round(p.acc)} m)` : "") : "—";
   const kv = [["Nome", r.cartella], ["Data", r.dataValutazione ? r.dataValutazione.split("-").reverse().join("/") : ""], ["Progetto", r.lavoro],
-    ["Tipo di rilievo", tipoNorm(r.tipoValutazione)], ["Numeri", numeri(r).join("  ")],
+    ["Tipo di rilievo", r.tipoValutazione === "Sorveglianza scavo" ? "Sorveglianza scavo" : ""], ["Numeri", numeri(r).join("  ")],
+    ["Rilevatore", r.operatore], ["Specie", r.specie], ["Diametro 120 cm", r.diametro120 ? r.diametro120 + " cm" : ""], ["Altezza", r.altezza ? r.altezza + " m" : ""],
+    ["Posizione", pos], ["Note di campo", r.problematiche], ["Protocollo", r.protocollo === "ARETE" ? "ARETÉ" : r.protocollo || ""], ["Nuova CPC", r.cpc],
+    ["Interventi proposti", intTxt(r) || "Nessun intervento proposto"], ["Note sugli interventi", r.interventi],
     ["Indagine strumentale", r.strumOn ? `${r.strumento || "sì"}${r.esitoProva ? " · esito " + r.esitoProva.toLowerCase() : ""}` : ""],
-    ["Rilevatore", r.operatore], ["Specie", r.specie], ["Diametro 120 cm", r.diametro120 + " cm"], ["Altezza", r.altezza + " m"],
-    ["Posizione", pos], ["Note di campo", r.problematiche], ["Interventi e nuova CPC", r.interventi], ["Strumento", r.strumento],
     ["Stato", (STATO[r.status] || [r.status])[0] + (r.error ? " – " + r.error : "")]];
   $("#detKv").innerHTML = kv.filter((x) => x[1]).map(([k, v]) => `<div>${k}</div><div>${esc(v)}</div>`).join("");
   $("#detThumbs").innerHTML = r.foto.map((f) => `<div class="th"><img src="${URL.createObjectURL(f.arrow || f.clean)}">
@@ -1414,17 +1434,30 @@ async function main() {
   $("#btnNew").addEventListener("click", async () => { Compass.start().then(() => $("#btnCompass").classList.add("hidden")); openForm(); });
   $("#btnFormBack").addEventListener("click", () => {
     if (draft && draft.foto.length && !confirm("Annullare il rilievo? Le foto scattate andranno perse.")) return;
-    draft = null; GPS.fixed = null; show("home");
+    const back = editingId; editingId = null;
+    draft = null; GPS.fixed = null;
+    back ? openDetail(back) : show("home");
   });
-  $("#fStrumOn").addEventListener("change", (e) => $("#strumFields").classList.toggle("hidden", !e.target.checked));
-  bindSeg("segEsito", (v) => { if (!draft) return; draft.esitoProva = draft.esitoProva === v ? "" : v; setSeg("segEsito", draft.esitoProva); });
+  $("#btnCal").addEventListener("click", () => { const d = $("#fData"); try { d.showPicker(); } catch (e) { d.focus(); d.click(); } });
+  ["fNgs", "fNcart", "fNprog"].forEach((id) => $("#" + id).addEventListener("input", updateIdReq));
+  $("#btnEdit").addEventListener("click", () => current && editRecord(current.id));
+  $("#btnNewPrj").addEventListener("click", () => { $("#newPrjBox").classList.remove("hidden"); $("#newPrjName").value = ""; $("#newPrjName").focus(); });
+  $("#btnNewPrjNo").addEventListener("click", () => $("#newPrjBox").classList.add("hidden"));
+  $("#btnNewPrjOk").addEventListener("click", async () => {
+    const n = $("#newPrjName").value.trim().replace(/\s+/g, " ");
+    if (!n) { toast("Scrivi il nome del progetto"); return; }
+    const list = (await DB.getKV("projects")) || [];
+    if (!list.includes(n)) { list.push(n); await DB.setKV("projects", list); }
+    $("#newPrjBox").classList.add("hidden");
+    openProject(n);
+  });
   $("#fData").addEventListener("change", updateNamePreview);
   $("#btnPrjExport").addEventListener("click", () => Sync.exportProject(currentProject, prjOut));
   $("#sStudio").addEventListener("change", (e) => { S.studio = e.target.value.trim(); saveSettings(); });
   $("#sQual").addEventListener("change", (e) => { S.qualifica = e.target.value.trim(); saveSettings(); });
   bindSeg("segProtocollo", (v) => setProtocollo(v));
-  ["fPotOn", "fScavoOn", "fAltroOn"].forEach((i) => $("#" + i).addEventListener("change", (e) => $("#" + e.target.dataset.box).classList.toggle("hidden", !e.target.checked)));
-  $("#fLavoro").addEventListener("change", async () => { if (draft) await suggestProgressivo(); checkDuplicate(); });
+
+  $("#fLavoro").addEventListener("change", () => checkDuplicate());
   ["fLavoro", "fNgs", "fNcart", "fNprog"].forEach((id) => $("#" + id).addEventListener("input", updateNamePreview));
   ["fNgs", "fNcart", "fNprog"].forEach((id) => $("#" + id).addEventListener("change", checkDuplicate));
   $("#btnPrjBack").addEventListener("click", () => show("list"));
@@ -1446,10 +1479,6 @@ async function main() {
     const f = GPS.best || GPS.last;
     if (!f) { toast("Nessuna posizione ancora"); return; }
     GPS.fixed = { ...f }; updateGpsUI(); toast(`Posizione fissata (±${Math.round(f.acc)} m)`);
-  });
-  $("#fAllegati").addEventListener("change", (e) => {
-    draft.allegati = Array.from(e.target.files).map((f) => ({ name: f.name, blob: f }));
-    $("#allegatiInfo").textContent = draft.allegati.map((a) => a.name).join(", ");
   });
 
   // fotocamera interna

@@ -126,7 +126,7 @@ const OUT = (() => {
     const protTxt = isArete ? "ARETÉ" : r.protocollo === "SIA" ? "SIA" : "";
     const cpcTxt = isArete ? "vedi scheda ARETÉ" : r.cpc || "";
     const para = (t) => String(t || "").split(/\r?\n/).filter((x) => x.trim()).map((x, i, a) => P(x, { after: i < a.length - 1 ? 40 : 0 }));
-    const noteCell = (t) => { const p = para(t); return p.length ? p : P("—", { after: 0 }); };
+    const noteCell = (t) => { const p = para(t); return p.length ? p : [P("—", { after: 0 })]; };
 
     // intestazione e piè di pagina
     const lg = await logo();
@@ -185,7 +185,12 @@ const OUT = (() => {
     if (isArete) val.push(["Classe di rischio", "vedi scheda ARETÉ allegata"]);
     else val.push(["Nuova CPC", r.cpc || "—"]);
     if (r.tipoValutazione === "Sorveglianza scavo") val.unshift(["Tipo di rilievo", "Sorveglianza scavo"]);
-    val.push(["Note di campo", noteCell(r.problematiche)], ["Interventi", noteCell(r.interventi)]);
+    const ip = r.interventiProposti || [];
+    val.push(["Note di campo", noteCell(r.problematiche)],
+      ["Interventi proposti", ip.length
+        ? ip.map((x, i) => P([run(x.nome, { bold: true }), run(x.tempo ? " – " + x.tempo : "")], { after: i < ip.length - 1 ? 40 : 0 }))
+        : [P("Nessun intervento proposto", { after: 0 })]]);
+    if ((r.interventi || "").trim()) val.push(["Note sugli interventi", noteCell(r.interventi)]);
     if (r.strumOn) val.push(["Indagine strumentale", [
       P([run("Strumento: ", { bold: true }), run(dash(r.strumento))], { after: 20 }),
       P([run("Esito della prova: ", { bold: true }), run(r.esitoProva ? "rischio " + r.esitoProva.toLowerCase() : "—")], { after: r.strumNote ? 20 : 0 }),
@@ -235,20 +240,19 @@ const OUT = (() => {
   // Lat e Lon: indici LAT/LON (formato numerico nel riepilogo, tolte dagli attributi del vettoriale)
   const COLS = [
     ["N.", 5], ["Nome rilievo", 44], ["Data valutazione", 12], ["N. gs", 9], ["N. cart", 9], ["N. progr.", 9],
-    ["Specie", 28], ["Diametro 120 cm (cm)", 11], ["Altezza (m)", 9], ["Protocollo", 10], ["Nuova CPC", 9], ["Note di campo", 40], ["Interventi", 34],
-    ["Tipo di strumentale", 16], ["Esito prova", 10], ["Note strumentale", 30], ["Lat", 11], ["Lon", 11],
-    ["Potatura", 28], ["Scavo", 28], ["Altro", 28], ["Posizione corretta a mano", 10], ["N. foto", 7], ["Rilevatore", 18], ["Maps", 40],
+    ["Specie", 28], ["Diametro 120 cm (cm)", 11], ["Altezza (m)", 9], ["Protocollo", 10], ["Nuova CPC", 9], ["Note di campo", 40],
+    ["Interventi proposti", 44], ["Note sugli interventi", 34], ["Lat", 11], ["Lon", 11],
+    ["Posizione corretta a mano", 10], ["N. foto", 7], ["Rilevatore", 18], ["Maps", 40],
   ];
-  const LAT = 16, LON = 17;
-  const voce = (on, note) => (on ? note || "sì" : "");
+  const LAT = 14, LON = 15;
+  const intTxt = (r) => (r.interventiProposti || []).map((x) => x.nome + (x.tempo ? ` (${x.tempo})` : "")).join("; ");
   function rowOf(r, i) {
     const p = r.posizione || {};
     return [i + 1, r.cartella, itDate(r.dataValutazione),
       r.ngs || "", r.ncart || "", r.nprog ? Number(r.nprog) : "", r.specie || "", num(r.diametro120) ?? "", num(r.altezza) ?? "",
       r.protocollo === "ARETE" ? "ARETÉ" : r.protocollo || (r.tipoValutazione === "Sorveglianza scavo" ? "Sorveglianza scavo" : ""), r.cpc || "",
-      r.problematiche || "", r.interventi || "", r.strumOn ? r.strumento || "" : "", r.strumOn ? r.esitoProva || "" : "", r.strumOn ? r.strumNote || "" : "",
+      r.problematiche || "", intTxt(r) || "Nessun intervento proposto", r.interventi || "",
       p.lat ? Number(p.lat.toFixed(6)) : "", p.lon ? Number(p.lon.toFixed(6)) : "",
-      voce(r.potOn, r.potNote), voce(r.scavoOn, r.scavoNote), voce(r.altroOn, r.altroNote),
       p.manuale ? "sì" : "", r.foto.length, r.operatore || "", p.lat ? mapsUrl(p) : ""];
   }
   function csv(list) {
