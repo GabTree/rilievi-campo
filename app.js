@@ -791,7 +791,7 @@ async function saveForm() {
     if (r.arete.ubicaz) await DB.setKV("areteRemember", { ubicaz: r.arete.ubicaz });
   }
   r.status = "pending"; delete r.daElenco; r.error = "";
-  if (editingId) r.modificatoIl = Date.now();
+  if (editingId) { r.modificatoIl = Date.now(); r.onlyData = false; } // dopo una modifica si reinvia tutto, foto comprese
   await DB.put(r);
   await DB.setKV("lastLavoro", { lavoro: r.lavoro });
   S.protocollo = r.protocollo; saveSettings();
