@@ -24,35 +24,68 @@ const OUT = (() => {
     return logo.b;
   }
 
-  // estratto di mappa da OpenStreetMap con il pallino verde della pianta (serve la rete)
-  async function staticMap(lat, lon, z = 18, W0 = 760, H0 = 520) {
+  // estratto di mappa con il cerchio della pianta: satellite Esri (se c'è la chiave), altrimenti OpenStreetMap. Serve la rete.
+  const satKey = () => (window.APP_CONFIG && APP_CONFIG.esriKey) || "";
+  const SRC = {
+    sat: { url: (z, x, y) => `https://ibasemaps-api.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}?token=${encodeURIComponent(satKey())}`, attr: "Esri, Maxar, Earthstar Geographics" },
+    osm: { url: (z, x, y) => `https://tile.openstreetmap.org/${z}/${x}/${y}.png`, attr: "© OpenStreetMap" },
+  };
+  // dove non ha immagini dettagliate Esri restituisce una tessera grigia uniforme: la riconosco dalla poca varietà di colori
+  function isPlaceholder(bmp) {
+    const c = document.createElement("canvas"); c.width = c.height = 16;
+    const g = c.getContext("2d"); g.drawImage(bmp, 0, 0, 16, 16);
+    const d = g.getImageData(0, 0, 16, 16).data; let m = 0, m2 = 0;
+    for (let i = 0; i < d.length; i += 4) { const v = (d[i] + d[i + 1] + d[i + 2]) / 3; m += v; m2 += v * v; }
+    const n = d.length / 4;
+    return Math.sqrt(Math.max(0, m2 / n - (m / n) ** 2)) < 4;
+  }
+  async function drawTiles(src, lat, lon, z, W0, H0) {
     const n = 2 ** z, x = ((lon + 180) / 360) * n;
     const y = ((1 - Math.log(Math.tan((lat * Math.PI) / 180) + 1 / Math.cos((lat * Math.PI) / 180)) / Math.PI) / 2) * n;
     const c = document.createElement("canvas"); c.width = W0; c.height = H0;
     const g = c.getContext("2d");
     g.fillStyle = "#e9eee8"; g.fillRect(0, 0, W0, H0);
-    const x0 = x * 256 - W0 / 2, y0 = y * 256 - H0 / 2;
+    const x0 = x * 256 - W0 / 2, y0 = y * 256 - H0 / 2, cx = Math.floor(x), cy = Math.floor(y);
+    let ok = 0, centerBad = false;
     const jobs = [];
     for (let tx = Math.floor(x0 / 256); tx <= Math.floor((x0 + W0) / 256); tx++)
       for (let ty = Math.floor(y0 / 256); ty <= Math.floor((y0 + H0) / 256); ty++)
-        jobs.push(fetch(`https://tile.openstreetmap.org/${z}/${tx}/${ty}.png`, { mode: "cors" })
+        jobs.push(fetch(src.url(z, tx, ty), { mode: "cors" })
           .then((r) => (r.ok ? r.blob() : null)).then((b) => (b ? createImageBitmap(b) : null))
-          .then((bmp) => { if (bmp) g.drawImage(bmp, tx * 256 - x0, ty * 256 - y0); }).catch(() => {}));
+          .then((bmp) => {
+            if (!bmp) return;
+            if (src === SRC.sat && tx === cx && ty === cy && isPlaceholder(bmp)) centerBad = true;
+            g.drawImage(bmp, tx * 256 - x0, ty * 256 - y0); ok++;
+          }).catch(() => {}));
     await Promise.all(jobs);
-    g.beginPath(); g.arc(W0 / 2, H0 / 2, 13, 0, Math.PI * 2); g.fillStyle = "#2e7d32"; g.fill();
-    g.lineWidth = 5; g.strokeStyle = "#fff"; g.stroke();
-    g.font = "15px Arial"; g.fillStyle = "rgba(255,255,255,.85)"; g.fillRect(W0 - 140, H0 - 24, 140, 24);
-    g.fillStyle = "#333"; g.fillText("© OpenStreetMap", W0 - 128, H0 - 7);
-    return canvasBlob(c);
+    return { c, g, ok, centerBad };
   }
-
-  function qrBlob(text) {
-    const q = qrcode(0, "M"); q.addData(text); q.make();
-    const n = q.getModuleCount(), s = 8, m = 2, c = document.createElement("canvas");
-    c.width = c.height = (n + 2 * m) * s;
-    const g = c.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height); g.fillStyle = "#000";
-    for (let r = 0; r < n; r++) for (let k = 0; k < n; k++) if (q.isDark(r, k)) g.fillRect((k + m) * s, (r + m) * s, s, s);
-    return canvasBlob(c);
+  async function staticMap(lat, lon, z = 19, W0 = 840, H0 = 600) {
+    let src = satKey() ? SRC.sat : SRC.osm, res = null;
+    if (src === SRC.sat) {
+      for (let zz = z; zz >= 16; zz--) { res = await drawTiles(src, lat, lon, zz, W0, H0); z = zz; if (!res.ok || !res.centerBad) break; }
+      if (!res || !res.ok) src = SRC.osm;
+    }
+    if (src === SRC.osm) { z = Math.min(z, 18); res = await drawTiles(src, lat, lon, z, W0, H0); }
+    const { c, g } = res;
+    // cerchio giallo bordato di scuro: si vede sia sul satellite sia sulla mappa
+    g.beginPath(); g.arc(W0 / 2, H0 / 2, 26, 0, Math.PI * 2); g.lineWidth = 9; g.strokeStyle = "rgba(0,0,0,.55)"; g.stroke();
+    g.lineWidth = 5; g.strokeStyle = "#ffd60a"; g.stroke();
+    g.beginPath(); g.arc(W0 / 2, H0 / 2, 4, 0, Math.PI * 2); g.fillStyle = "#ffd60a"; g.fill();
+    // barra di scala
+    const mpp = (156543.03392 * Math.cos((lat * Math.PI) / 180)) / 2 ** z;
+    const len = [5, 10, 20, 50, 100, 200].find((m) => m / mpp >= 90) || 200, px = len / mpp;
+    g.fillStyle = "rgba(255,255,255,.88)"; g.fillRect(12, H0 - 44, px + 78, 32);
+    g.fillStyle = "#222"; g.fillRect(22, H0 - 24, px, 5); g.fillRect(22, H0 - 32, 3, 13); g.fillRect(22 + px - 3, H0 - 32, 3, 13);
+    g.font = "bold 18px Arial"; g.fillText(`${len} m`, 32 + px, H0 - 19);
+    // nord in alto
+    g.fillStyle = "rgba(255,255,255,.88)"; g.beginPath(); g.arc(W0 - 34, 36, 24, 0, Math.PI * 2); g.fill();
+    g.fillStyle = "#222"; g.beginPath(); g.moveTo(W0 - 34, 16); g.lineTo(W0 - 42, 38); g.lineTo(W0 - 26, 38); g.closePath(); g.fill();
+    g.font = "bold 14px Arial"; g.fillText("N", W0 - 39, 55);
+    const at = src.attr; g.font = "15px Arial"; const tw = g.measureText(at).width + 16;
+    g.fillStyle = "rgba(255,255,255,.85)"; g.fillRect(W0 - tw, H0 - 24, tw, 24);
+    g.fillStyle = "#333"; g.fillText(at, W0 - tw + 8, H0 - 7);
+    return { blob: await canvasBlob(c, "image/jpeg"), attr: src === SRC.sat ? "immagine satellitare Esri" : "© OpenStreetMap" };
   }
 
   /* ---------------------------------------------- scheda di valutazione Word */
@@ -89,7 +122,11 @@ const OUT = (() => {
     const dirTxt = (f) => (f.heading !== null && f.heading !== undefined ? `direzione dello scatto ${Math.round(f.heading)}° ${cardinal(f.heading)}` : "");
     const capTxt = (i, f, def) => [`Fig. ${i}`, def, dirTxt(f), itDate(r.dataValutazione)].filter(Boolean).join(" · ");
     const nums = numeri(r).join(" · ") || "—";
-    const strum = r.strumOn ? `${dash(r.strumento)}${r.esitoProva ? " – esito: rischio " + r.esitoProva.toLowerCase() : ""}` : "—";
+    const isArete = r.protocollo === "ARETE";
+    const protTxt = isArete ? "ARETÉ" : r.protocollo === "SIA" ? "SIA" : "";
+    const cpcTxt = isArete ? "vedi scheda ARETÉ" : r.cpc || "";
+    const para = (t) => String(t || "").split(/\r?\n/).filter((x) => x.trim()).map((x, i, a) => P(x, { after: i < a.length - 1 ? 40 : 0 }));
+    const noteCell = (t) => { const p = para(t); return p.length ? p : P("—", { after: 0 }); };
 
     // intestazione e piè di pagina
     const lg = await logo();
@@ -118,23 +155,24 @@ const OUT = (() => {
       P(l.toUpperCase(), { size: 15, bold: true, color: VERDE, after: 20 }), P(dash(v), { bold: true, after: 0 })], q,
       { fill: VERDE_CHIARO, borders: bb({ t, b, l: i === 0, r: i === items.length - 1 }), mt: t ? 120 : 60, mb: b ? 120 : 60, v: VerticalAlign.TOP })) });
     const esito = new Table({ width: { size: W, type: WidthType.DXA }, columnWidths: [q, q, q, q], layout: TableLayoutType.FIXED, rows: [
-      sumRow([["Data della valutazione", data], ["Pianta", nums], ["Specie", r.specie], ["Tipo di rilievo", r.tipoValutazione === "Sorveglianza scavo" ? "Sorveglianza scavo" : "Valutazione fitostatica"]], true, false),
-      sumRow([["Indagine strumentale", r.strumOn ? (r.esitoProva ? "Rischio " + r.esitoProva.toLowerCase() : "eseguita") : "—"], ["Diametro / altezza", [r.diametro120 && r.diametro120 + " cm", r.altezza && r.altezza + " m"].filter(Boolean).join(" · ")],
-        ["Interventi e nuova CPC", (r.interventi || "").slice(0, 90)], ["Rilevatore", r.operatore]], false, true),
+      sumRow([["Data della valutazione", data], ["Pianta", nums], ["Specie", r.specie], ["Diametro / altezza", [r.diametro120 && r.diametro120 + " cm", r.altezza && r.altezza + " m"].filter(Boolean).join(" · ")]], true, false),
+      sumRow([["Protocollo", protTxt], ["Nuova CPC", cpcTxt], ["Progetto", r.lavoro], ["Rilevatore", r.operatore]], false, true),
     ] });
 
     // foto generale + mappa + QR
     const children = [esito, P("", { after: 120 })];
-    const f1 = r.foto[0];
-    const left = f1 ? [new Paragraph({ children: [await img(fotoBlob(f1), 250, "jpg")] }), caption(capTxt(1, f1, "Vista generale"))] : [P("Nessuna foto", { color: GRIGIO })];
+    // foto generale a sinistra, estratto satellitare (un po' più grande) a destra
+    const f1 = r.foto[0], CL = 4150, CR = W - CL;
+    const left = f1 ? [new Paragraph({ children: [await img(fotoBlob(f1), 245, "jpg")] }), caption(capTxt(1, f1, "Vista generale"))] : [P("Nessuna foto", { color: GRIGIO })];
     let right = [P("Posizione non disponibile", { color: GRIGIO })];
     if (pos) {
-      right = [];
-      try { if (navigator.onLine) right.push(new Paragraph({ children: [await img(await staticMap(pos.lat, pos.lon), 250, "png")] }), caption("Estratto di mappa – posizione della pianta (© OpenStreetMap)")); } catch (e) { /* offline */ }
-      right.push(new Paragraph({ children: [await img(await qrBlob(mapsUrl(pos)), 92, "png")], spacing: { before: 200, after: 0 } }), caption("Inquadra il codice per aprire la posizione in Google Maps"));
+      right = [P("Mappa non disponibile (documento creato senza rete)", { color: GRIGIO })];
+      try {
+        if (navigator.onLine) { const m = await staticMap(pos.lat, pos.lon); right = [new Paragraph({ children: [await img(m.blob, 330, "jpg")], alignment: AlignmentType.RIGHT }), caption(`Posizione della pianta (cerchio giallo) – ${m.attr}`)]; }
+      } catch (e) { /* offline */ }
     }
-    children.push(new Table({ width: { size: W, type: WidthType.DXA }, columnWidths: [4819, 4819], layout: TableLayoutType.FIXED, borders: tblNoB,
-      rows: [new TableRow({ cantSplit: true, children: [cell(left, 4819, { borders: noB, ml: 0, v: VerticalAlign.TOP }), cell(right, 4819, { borders: noB, v: VerticalAlign.TOP })] })] }));
+    children.push(new Table({ width: { size: W, type: WidthType.DXA }, columnWidths: [CL, CR], layout: TableLayoutType.FIXED, borders: tblNoB,
+      rows: [new TableRow({ cantSplit: true, children: [cell(left, CL, { borders: noB, ml: 0, v: VerticalAlign.TOP }), cell(right, CR, { borders: noB, mr: 0, v: VerticalAlign.TOP })] })] }));
 
     const coord = pos ? [new Paragraph({ spacing: { after: 0 }, children: [
       run(`${pos.lat.toFixed(6)}, ${pos.lon.toFixed(6)} (WGS84${pos.manuale ? ", posizione corretta a mano" : pos.acc ? ", ± " + Math.round(pos.acc) + " m" : ""}) · `),
@@ -142,9 +180,19 @@ const OUT = (() => {
     children.push(heading(1, "Dati generali"), kv([["Data della valutazione", data], ["Rilevatore", r.operatore], ["Progetto / committente", r.lavoro], ["Coordinate", coord]]));
     children.push(heading(2, "Esemplare"), kv([["N. Greenspaces (gs.)", r.ngs], ["N. cartellino (cart.)", r.ncart], ["N. progressivo (rel.)", r.nprog],
       ["Specie", r.specie], ["Diametro a 120 cm", r.diametro120 ? r.diametro120 + " cm" : ""], ["Altezza", r.altezza ? r.altezza + " m" : ""]]));
-    const val = [["Tipo di rilievo", r.tipoValutazione === "Sorveglianza scavo" ? "Sorveglianza scavo" : "Valutazione fitostatica"], ["Note di campo", r.problematiche]];
-    if (r.tipoValutazione !== "Sorveglianza scavo") val.push(["Indagine strumentale", strum]);
-    val.push(["Interventi e nuova CPC", r.interventi]);
+    // 3. Valutazione: protocollo e CPC, note di campo, interventi, poi le voci spuntate con le loro note
+    const val = [["Protocollo di valutazione", protTxt || "—"]];
+    if (isArete) val.push(["Classe di rischio", "vedi scheda ARETÉ allegata"]);
+    else val.push(["Nuova CPC", r.cpc || "—"]);
+    if (r.tipoValutazione === "Sorveglianza scavo") val.unshift(["Tipo di rilievo", "Sorveglianza scavo"]);
+    val.push(["Note di campo", noteCell(r.problematiche)], ["Interventi", noteCell(r.interventi)]);
+    if (r.strumOn) val.push(["Indagine strumentale", [
+      P([run("Strumento: ", { bold: true }), run(dash(r.strumento))], { after: 20 }),
+      P([run("Esito della prova: ", { bold: true }), run(r.esitoProva ? "rischio " + r.esitoProva.toLowerCase() : "—")], { after: r.strumNote ? 20 : 0 }),
+      ...para(r.strumNote), ...(r.allegati && r.allegati.length ? [P(`Allegati: ${r.allegati.map((a) => a.name).join(", ")}`, { size: 18, color: GRIGIO, after: 0 })] : [])]]);
+    if (r.potOn) val.push(["Potatura", noteCell(r.potNote)]);
+    if (r.scavoOn) val.push(["Scavo", noteCell(r.scavoNote)]);
+    if (r.altroOn) val.push(["Altro", noteCell(r.altroNote)]);
     children.push(heading(3, "Valutazione"), kv(val));
 
     // documentazione fotografica: 2 per riga
@@ -166,7 +214,8 @@ const OUT = (() => {
     children.push(heading(r.foto.length > 1 ? 5 : 4, "Note metodologiche"),
       P((r.tipoValutazione === "Sorveglianza scavo"
         ? "Sorveglianza eseguita durante i lavori di scavo in prossimità dell'esemplare. "
-        : "La valutazione è stata eseguita con metodo visivo (VTA – Visual Tree Assessment)" + (r.strumOn ? " e con indagine strumentale" : "") + ". ") +
+        : "La valutazione è stata eseguita con metodo visivo (VTA – Visual Tree Assessment)" + (r.strumOn ? " e con indagine strumentale" : "") +
+          (isArete ? ", secondo il protocollo ARETÉ (scheda allegata)" : r.protocollo === "SIA" ? ", secondo il protocollo SIA con attribuzione della classe di propensione al cedimento (CPC)" : "") + ". ") +
         "I risultati si riferiscono alle condizioni dell'esemplare rilevate alla data del sopralluogo e possono variare per eventi meteorici, interventi o evoluzione di patologie.",
         { line: 276, after: 360 }));
     children.push(new Table({ width: { size: W, type: WidthType.DXA }, columnWidths: [4819, 4819], layout: TableLayoutType.FIXED, borders: tblNoB,
@@ -183,19 +232,24 @@ const OUT = (() => {
   }
 
   /* ------------------------------------------------------ riepilogo */
+  // Lat e Lon: indici LAT/LON (formato numerico nel riepilogo, tolte dagli attributi del vettoriale)
   const COLS = [
-    ["N.", 5], ["Nome rilievo", 44], ["Data valutazione", 12], ["Tipo di rilievo", 18], ["N. gs", 9], ["N. cart", 9], ["N. progr.", 9],
-    ["Specie", 28], ["Diametro 120 cm (cm)", 11], ["Altezza (m)", 9], ["Note di campo", 40], ["Interventi e nuova CPC", 34],
-    ["Tipo di strumentale", 16], ["Esito prova", 10], ["Lat", 11], ["Lon", 11], ["Posizione corretta a mano", 10], ["N. foto", 7],
-    ["Rilevatore", 18], ["Maps", 40],
+    ["N.", 5], ["Nome rilievo", 44], ["Data valutazione", 12], ["N. gs", 9], ["N. cart", 9], ["N. progr.", 9],
+    ["Specie", 28], ["Diametro 120 cm (cm)", 11], ["Altezza (m)", 9], ["Protocollo", 10], ["Nuova CPC", 9], ["Note di campo", 40], ["Interventi", 34],
+    ["Tipo di strumentale", 16], ["Esito prova", 10], ["Note strumentale", 30], ["Lat", 11], ["Lon", 11],
+    ["Potatura", 28], ["Scavo", 28], ["Altro", 28], ["Posizione corretta a mano", 10], ["N. foto", 7], ["Rilevatore", 18], ["Maps", 40],
   ];
+  const LAT = 16, LON = 17;
+  const voce = (on, note) => (on ? note || "sì" : "");
   function rowOf(r, i) {
     const p = r.posizione || {};
-    return [i + 1, r.cartella, itDate(r.dataValutazione), r.tipoValutazione === "Sorveglianza scavo" ? "Sorveglianza scavo" : "Valutazione",
+    return [i + 1, r.cartella, itDate(r.dataValutazione),
       r.ngs || "", r.ncart || "", r.nprog ? Number(r.nprog) : "", r.specie || "", num(r.diametro120) ?? "", num(r.altezza) ?? "",
-      r.problematiche || "", r.interventi || "", r.strumOn ? r.strumento || "" : "", r.strumOn ? r.esitoProva || "" : "",
-      p.lat ? Number(p.lat.toFixed(6)) : "", p.lon ? Number(p.lon.toFixed(6)) : "", p.manuale ? "sì" : "", r.foto.length, r.operatore || "",
-      p.lat ? mapsUrl(p) : ""];
+      r.protocollo === "ARETE" ? "ARETÉ" : r.protocollo || (r.tipoValutazione === "Sorveglianza scavo" ? "Sorveglianza scavo" : ""), r.cpc || "",
+      r.problematiche || "", r.interventi || "", r.strumOn ? r.strumento || "" : "", r.strumOn ? r.esitoProva || "" : "", r.strumOn ? r.strumNote || "" : "",
+      p.lat ? Number(p.lat.toFixed(6)) : "", p.lon ? Number(p.lon.toFixed(6)) : "",
+      voce(r.potOn, r.potNote), voce(r.scavoOn, r.scavoNote), voce(r.altroOn, r.altroNote),
+      p.manuale ? "sì" : "", r.foto.length, r.operatore || "", p.lat ? mapsUrl(p) : ""];
   }
   function csv(list) {
     const lines = [COLS.map((c) => c[0]), ...list.map(rowOf)].map((row) =>
@@ -213,7 +267,7 @@ const OUT = (() => {
     const rows = [`<row r="1">${COLS.map((c, i) => cellX(colL(i) + 1, c[0], 1)).join("")}</row>`];
     list.forEach((r, k) => {
       const vals = rowOf(r, k), rn = k + 2;
-      rows.push(`<row r="${rn}">${vals.map((v, i) => cellX(colL(i) + rn, v, typeof v === "number" ? (i === 14 || i === 15 ? 3 : 4) : 2)).join("")}</row>`);
+      rows.push(`<row r="${rn}">${vals.map((v, i) => cellX(colL(i) + rn, v, typeof v === "number" ? (i === LAT || i === LON ? 3 : 4) : 2)).join("")}</row>`);
     });
     const last = colL(COLS.length - 1) + (list.length + 1);
     const sheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -254,7 +308,7 @@ const OUT = (() => {
   /* ------------------------------------------------------ vettoriale */
   function attrs(r, i) {
     const v = rowOf(r, i), o = {};
-    COLS.forEach((c, k) => { if (k !== 14 && k !== 15) o[c[0]] = v[k] === "" ? null : v[k]; });
+    COLS.forEach((c, k) => { if (k !== LAT && k !== LON) o[c[0]] = v[k] === "" ? null : v[k]; });
     return o;
   }
   function geojson(list) {

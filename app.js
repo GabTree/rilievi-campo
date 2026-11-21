@@ -3,7 +3,7 @@
  * salvataggio offline (IndexedDB) e sincronizzazione su OneDrive (Microsoft Graph). */
 "use strict";
 
-const APP_VERSION = "0.5";
+const APP_VERSION = "0.5.1";
 const CFG = window.APP_CONFIG || {};
 // errori imprevisti: mostrati in rosso in alto, per capire subito cosa non va
 function showErr(msg) {
@@ -64,7 +64,7 @@ const DB = {
 
 /* ---------------------------------------------------------- Settings */
 const S = { basemap: "osm", prjColors: {}, prjOff: [], folder: "Rilievi", name: "", init: "", north: "T", decl: 3.5, quality: 2048, arrow: true,
-  provider: "", msClientId: "", gClientId: "", setupDone: false, areteOn: false,
+  provider: "", msClientId: "", gClientId: "", setupDone: false, areteOn: false, protocollo: "SIA",
   studio: "", qualifica: "", out: { schede: true, arete: true, foto: true, riepilogo: true, vettoriale: false } };
 async function loadSettings() {
   const v = await DB.getKV("settings");
@@ -617,15 +617,15 @@ async function openForm(project) {
   if (!S.name || !S.init) { toast("Prima inserisci il nome del rilevatore e le iniziali"); openWizard(); return; }
   draft = newDraft();
   const last = (await DB.getKV("lastLavoro")) || {};
-  ["fNgs", "fNcart", "fNprog", "fSpecie", "fDiam", "fAlt", "fProb", "fInt", "fStrum"].forEach((i) => ($("#" + i).value = ""));
+  ["fNgs", "fNcart", "fNprog", "fSpecie", "fDiam", "fAlt", "fProb", "fInt", "fStrum", "fStrumNote", "fPotNote", "fScavoNote", "fAltroNote", "fCpc"].forEach((i) => ($("#" + i).value = ""));
+  ["fPotOn", "fScavoOn", "fAltroOn"].forEach((i) => { $("#" + i).checked = false; $("#" + $("#" + i).dataset.box).classList.add("hidden"); });
   $("#fAllegati").value = ""; $("#allegatiInfo").textContent = "";
   $("#fData").value = draft.dataValutazione;
   $("#fLavoro").value = project || last.lavoro || "";
   $("#formWho").textContent = `Rilevatore: ${S.name} (${S.init})`;
-  draft.tipoValutazione = tipoNorm(last.tipoValutazione);
-  setSeg("segValutazione", draft.tipoValutazione);
+  draft.tipoValutazione = "Valutazione";
   $("#fStrumOn").checked = false; $("#strumFields").classList.add("hidden"); setSeg("segEsito", "");
-  applyValutazione();
+  updateNamePreview();
   await suggestProgressivo();
   GPS.fixed = null; GPS.best = null; GPS.start();
   $("#gpsInfo").textContent = "In attesa del GPS…";
@@ -634,11 +634,8 @@ async function openForm(project) {
   $("#formErr").textContent = ""; $("#dupWarn").classList.add("hidden");
   renderThumbs();
   await fillLavori();
-  const tpl = await DB.getKV("areteTemplate");
-  $("#fAreteOn").checked = !!S.areteOn;
-  $("#areteMissing").classList.toggle("hidden", !!tpl);
-  $("#areteBox").classList.toggle("hidden", !(S.areteOn && tpl));
   if (window.ARETE_READY) ARETE.reset($("#areteBox"), (await DB.getKV("areteRemember")) || {});
+  await setProtocollo(S.protocollo === "ARETE" ? "ARETE" : "SIA");
   show("form");
   formMap._centered = false;
   formMap.ensure(); formMap.refresh();
@@ -655,12 +652,15 @@ async function completeTodo(id) {
   delete draft.posizione;
   const set = (i, v) => ($("#" + i).value = v ?? "");
   set("fNgs", t.ngs); set("fNcart", t.ncart); set("fNprog", t.nprog); set("fSpecie", t.specie); set("fDiam", t.diametro120); set("fAlt", t.altezza);
-  set("fProb", t.problematiche); set("fInt", t.interventi); set("fStrum", t.strumento);
+  set("fProb", t.problematiche); set("fInt", t.interventi); set("fStrum", t.strumento); set("fStrumNote", t.strumNote); set("fCpc", t.cpc);
+  [["fPotOn", "fPotNote", "pot"], ["fScavoOn", "fScavoNote", "scavo"], ["fAltroOn", "fAltroNote", "altro"]].forEach(([c, n, k]) => {
+    const on = !!(t[k + "On"] || t[k + "Note"]); $("#" + c).checked = on; set(n, t[k + "Note"]); $("#" + $("#" + c).dataset.box).classList.toggle("hidden", !on);
+  });
+  if (t.protocollo) await setProtocollo(t.protocollo);
   if (t.dataValutazione) set("fData", t.dataValutazione); else set("fData", isoToday());
-  draft.tipoValutazione = tipoNorm(t.tipoValutazione); setSeg("segValutazione", draft.tipoValutazione);
-  const strum = draft.tipoValutazione === "Valutazione" && !!(t.strumOn || t.strumento || t.esitoProva);
+  draft.tipoValutazione = "Valutazione";
+  const strum = !!(t.strumOn || t.strumento || t.esitoProva || t.strumNote);
   $("#fStrumOn").checked = strum; $("#strumFields").classList.toggle("hidden", !strum); setSeg("segEsito", t.esitoProva || "");
-  applyValutazione();
   if (hasPos(t)) {
     draft.posManuale = { lat: t.posizione.lat, lon: t.posizione.lon };
     formMap.set(t.posizione.lat, t.posizione.lon, true); formMap._centered = true;
@@ -673,8 +673,16 @@ async function completeTodo(id) {
   }
   renderThumbs(); updateNamePreview(); checkDuplicate();
 }
-// l'indagine strumentale fa parte della valutazione
-function applyValutazione() { $("#boxStrum").classList.toggle("hidden", draft.tipoValutazione !== "Valutazione"); updateNamePreview(); }
+// protocollo di valutazione: SIA (scelta della CPC) oppure ARETÉ (scheda ARETÉ)
+async function setProtocollo(v) {
+  setSeg("segProtocollo", v);
+  if (draft) draft.protocollo = v;
+  const tpl = await DB.getKV("areteTemplate");
+  $("#boxSia").classList.toggle("hidden", v !== "SIA");
+  $("#boxArete").classList.toggle("hidden", v !== "ARETE");
+  $("#areteMissing").classList.toggle("hidden", !!tpl);
+  $("#areteBox").classList.toggle("hidden", !tpl);
+}
 
 // propone il prossimo progressivo del progetto (si usa con un tocco)
 async function suggestProgressivo() {
@@ -740,7 +748,11 @@ async function saveForm() {
   Object.assign(r, {
     dataValutazione: v("fData") || isoToday(), lavoro: v("fLavoro"), ngs: v("fNgs"), ncart: v("fNcart"), nprog: v("fNprog"), specie: v("fSpecie"),
     diametro120: v("fDiam"), altezza: v("fAlt"), problematiche: v("fProb"), note: "", interventi: v("fInt"),
-    strumOn: r.tipoValutazione === "Valutazione" && $("#fStrumOn").checked,
+    tipoValutazione: "Valutazione", protocollo: r.protocollo || "SIA",
+    strumOn: $("#fStrumOn").checked, strumNote: $("#fStrumOn").checked ? v("fStrumNote") : "",
+    potOn: $("#fPotOn").checked, potNote: $("#fPotOn").checked ? v("fPotNote") : "",
+    scavoOn: $("#fScavoOn").checked, scavoNote: $("#fScavoOn").checked ? v("fScavoNote") : "",
+    altroOn: $("#fAltroOn").checked, altroNote: $("#fAltroOn").checked ? v("fAltroNote") : "",
     operatore: S.name, iniziali: (S.init || "XX").toUpperCase(), appVersion: APP_VERSION,
   });
   const err = [];
@@ -763,9 +775,10 @@ async function saveForm() {
     p.name = `foto_${n}.jpg`;
     p.nameN = p.arrow ? `foto_${n}_N.jpg` : null;
   });
+  r.cpc = r.protocollo === "SIA" ? v("fCpc") : "";
   r.arete = null; r.areteXlsx = null;
   const tpl = await DB.getKV("areteTemplate");
-  if ($("#fAreteOn").checked && tpl && window.ARETE_READY) {
+  if (r.protocollo === "ARETE" && tpl && window.ARETE_READY) {
     r.arete = ARETE.collect($("#areteBox"));
     try { r.areteXlsx = await ARETE.makeXlsx(tpl.blob, r); }
     catch (e) { $("#formErr").textContent = "Errore nella scheda ARETÉ: " + e.message; return; }
@@ -773,7 +786,8 @@ async function saveForm() {
   }
   r.status = "pending"; delete r.daElenco;
   await DB.put(r);
-  await DB.setKV("lastLavoro", { lavoro: r.lavoro, tipoValutazione: r.tipoValutazione });
+  await DB.setKV("lastLavoro", { lavoro: r.lavoro });
+  S.protocollo = r.protocollo; saveSettings();
   draft = null;
   GPS.fixed = null;
   toast("Rilievo salvato: " + r.cartella, 3500);
@@ -1118,7 +1132,9 @@ const Sync = {
       try { await Local.ensure(manual); } catch (e) { setSyncInfo(e.message); return; }
     } else if (!navigator.onLine) { if (manual) toast("Nessuna connessione: i rilievi restano sul telefono"); return; }
     const pending = (await DB.all()).filter((r) => r.status !== "synced" && !isTodo(r));
-    if (!pending.length) { if (manual) toast("Tutto sincronizzato"); setSyncInfo(`Tutto sincronizzato su ${P.name}`); return; }
+    // progetti con tabella riassuntiva / vettoriale mancanti o non aggiornati (es. spunte cambiate dopo l'invio)
+    const stale = await staleProjects();
+    if (!pending.length && !stale.length) { if (manual) toast("Tutto sincronizzato"); setSyncInfo(`Tutto sincronizzato su ${P.name}`); return; }
     this.running = true;
     let ok = 0, lastErr = "";
     const touched = new Set();
@@ -1138,13 +1154,17 @@ const Sync = {
         if (/scadut|Rinnovo|non collegato/.test(lastErr)) break;
       }
     }
+    stale.forEach((n) => touched.add(n));
+    const sigs = (await DB.getKV("projSig")) || {};
     for (const name of touched) {
       try {
         setSyncInfo(`Aggiorno i file del progetto ${name}…`);
         const base = `${safe(S.folder || "Rilievi")}/${await projectFolder(name)}`;
         for (const f of await projectFiles(name, S.out)) await P.upload(`${base}/${f.path}`, f.blob, manual);
+        sigs[name] = await projSig(name);
       } catch (e) { lastErr = String(e.message || e); }
     }
+    await DB.setKV("projSig", sigs);
     if (P === Local) await Local.finish();
     this.running = false;
     const left = (await DB.all()).filter((r) => r.status !== "synced" && !isTodo(r)).length;
@@ -1173,6 +1193,7 @@ const Sync = {
       info("File del progetto…");
       for (const f of await projectFiles(name, o)) await P.upload(`${base}/${f.path}`, f.blob, true);
       if (P === Local) await Local.finish();
+      if (o.riepilogo === !!S.out.riepilogo && o.vettoriale === !!S.out.vettoriale) { const sg = (await DB.getKV("projSig")) || {}; sg[name] = await projSig(name); await DB.setKV("projSig", sg); }
       info(`Fatto: ${base}`);
       toast("File del progetto aggiornati");
     } catch (e) { info("Errore: " + (e.message || e)); }
@@ -1180,6 +1201,18 @@ const Sync = {
     refreshCounts();
   },
 };
+// "firma" dei file di progetto: cambia se cambiano le spunte, il numero di piante o un invio
+async function projSig(name) {
+  const list = (await DB.all()).filter((r) => r.lavoro === name && !isTodo(r));
+  return JSON.stringify([!!S.out.riepilogo, !!S.out.vettoriale, list.length, Math.max(0, ...list.map((r) => r.syncedAt || 0))]);
+}
+async function staleProjects() {
+  if (!S.out.riepilogo && !S.out.vettoriale) return [];
+  const sigs = (await DB.getKV("projSig")) || {}, all = await DB.all(), out = [];
+  for (const name of new Set(all.filter((r) => !isTodo(r) && r.status === "synced" && r.lavoro).map((r) => r.lavoro)))
+    if (sigs[name] !== (await projSig(name))) out.push(name);
+  return out;
+}
 function setSyncInfo(t) { $("#syncInfo").textContent = t; }
 
 /* ----------------------------------------------------- Lista/dettaglio */
@@ -1316,7 +1349,7 @@ async function renderSettings() {
   $("#sFolder").value = S.folder; $("#sName").value = S.name; $("#sInit").value = S.init; $("#sDecl").value = S.decl;
   setSeg("segQuality", S.quality); setSeg("segProv", S.provider);
   $("#sStudio").value = S.studio || ""; $("#sQual").value = S.qualifica || "";
-  renderOutChecks($("#setOut"), S.out, (k, v) => { S.out[k] = v; saveSettings(); });
+  renderOutChecks($("#setOut"), S.out, (k, v) => { S.out[k] = v; saveSettings(); if (v && (k === "riepilogo" || k === "vettoriale")) Sync.run(); });
   const A = providerAuth();
   $("#acctInfo").textContent = !A ? "" :
     !A.configured() ? "Manca il codice dell'app: riapri la configurazione iniziale" :
@@ -1389,7 +1422,8 @@ async function main() {
   $("#btnPrjExport").addEventListener("click", () => Sync.exportProject(currentProject, prjOut));
   $("#sStudio").addEventListener("change", (e) => { S.studio = e.target.value.trim(); saveSettings(); });
   $("#sQual").addEventListener("change", (e) => { S.qualifica = e.target.value.trim(); saveSettings(); });
-  bindSeg("segValutazione", (v) => { draft.tipoValutazione = v; applyValutazione(); });
+  bindSeg("segProtocollo", (v) => setProtocollo(v));
+  ["fPotOn", "fScavoOn", "fAltroOn"].forEach((i) => $("#" + i).addEventListener("change", (e) => $("#" + e.target.dataset.box).classList.toggle("hidden", !e.target.checked)));
   $("#fLavoro").addEventListener("change", async () => { if (draft) await suggestProgressivo(); checkDuplicate(); });
   ["fLavoro", "fNgs", "fNcart", "fNprog"].forEach((id) => $("#" + id).addEventListener("input", updateNamePreview));
   ["fNgs", "fNcart", "fNprog"].forEach((id) => $("#" + id).addEventListener("change", checkDuplicate));
@@ -1495,12 +1529,6 @@ async function main() {
     } catch (err) { toast(err.message, 6000); }
     e.target.value = "";
     renderSettings();
-  });
-  $("#fAreteOn").addEventListener("change", async (e) => {
-    S.areteOn = e.target.checked; saveSettings();
-    const tpl = await DB.getKV("areteTemplate");
-    $("#areteMissing").classList.toggle("hidden", !!tpl || !S.areteOn);
-    $("#areteBox").classList.toggle("hidden", !(S.areteOn && tpl));
   });
 
   // configurazione iniziale

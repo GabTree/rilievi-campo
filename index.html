@@ -9,7 +9,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="RilieviCampo">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="stylesheet" href="vendor/leaflet.css?v=0.5">
+<link rel="stylesheet" href="vendor/leaflet.css?v=0.5.1">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="icon" href="icons/icon-192.png">
 <title>Rilievi di Campo-GabTree</title>
@@ -107,6 +107,8 @@
   .imp-tab { width: 100%; border-collapse: collapse; font-size: 13px; margin: 4px 0 6px; table-layout: fixed; }
   .imp-tab th, .imp-tab td { text-align: left; padding: 4px; border-bottom: 1px solid #eee; overflow-wrap: anywhere; }
   .imp-tab th:last-child, .imp-tab td:last-child { width: 40px; }
+  .voce { margin: 0 0 10px 30px; }
+  #fCpc { width: 100%; font-size: 17px; padding: 10px; border-radius: 10px; border: 1px solid #cfd8d1; background: #fff; }
   .mapbtn.follow { background: var(--verde); color: #fff; }
   .needle-fixed { position: absolute; left: 50%; top: -6px; transform: translateX(-50%); width: 0; height: 0;
     border-left: 10px solid transparent; border-right: 10px solid transparent; border-top: 18px solid var(--rosso); }
@@ -253,8 +255,6 @@
     <label class="f">Progetto (cliente / località) <span class="req">*</span></label>
     <input type="text" id="fLavoro" list="lavoriList" placeholder="es. Parco Rossi – Comune X" autocomplete="off">
     <datalist id="lavoriList"></datalist>
-    <label class="f">Tipo di rilievo</label>
-    <div class="seg" id="segValutazione"><button data-v="Valutazione">Valutazione</button><button data-v="Sorveglianza scavo">Sorveglianza scavo</button></div>
   </div>
 
   <div class="card">
@@ -299,28 +299,44 @@
     </div>
     <label class="f">Note di campo</label>
     <textarea id="fProb" placeholder="Descrizione libera (puoi usare la dettatura della tastiera)"></textarea>
-    <label class="f">Interventi e nuova CPC</label>
-    <textarea id="fInt"></textarea>
   </div>
 
-  <div class="card hidden" id="boxStrum">
-    <label class="f chk"><input type="checkbox" id="fStrumOn"> Indagine strumentale</label>
-    <div id="strumFields" class="hidden">
-    <label class="f">Tipo di strumentale</label>
-    <input type="text" id="fStrum" list="strumList" autocomplete="off" placeholder="es. resistografo">
-    <datalist id="strumList"><option value="Resistografo"><option value="Tomografo sonico"><option value="Pulling test"></datalist>
-    <label class="f">Esito della prova (rischio)</label>
-    <div class="seg" id="segEsito"><button data-v="Basso">Basso</button><button data-v="Medio">Medio</button><button data-v="Alto">Alto</button></div>
-    <label class="f">Allegati (grafici o file dello strumento)</label>
-    <input type="file" id="fAllegati" multiple>
-    <div class="muted" id="allegatiInfo"></div>
+  <div class="card">
+    <label class="f">Protocollo di valutazione</label>
+    <div class="seg" id="segProtocollo"><button data-v="SIA">SIA</button><button data-v="ARETE">ARETÉ</button></div>
+    <div id="boxSia">
+      <label class="f">Nuova CPC</label>
+      <select id="fCpc"><option value="">— scegli —</option><option>A</option><option>B</option><option>C</option><option>C/D</option><option>D</option></select>
     </div>
+    <div id="boxArete" class="hidden">
+      <div id="areteMissing" class="muted hidden" style="margin-top:8px">Per compilare la scheda ARETÉ carica prima il modello in <b>Impostazioni</b>.</div>
+      <div id="areteBox"></div>
+    </div>
+    <label class="f">Interventi</label>
+    <textarea id="fInt" placeholder="Interventi proposti"></textarea>
   </div>
 
-  <div class="card" id="cardArete">
-    <label class="f chk"><input type="checkbox" id="fAreteOn"> Compila anche la scheda ARETÉ</label>
-    <div id="areteMissing" class="muted hidden">Per usarla carica prima il modello ARETÉ in <b>Impostazioni</b>.</div>
-    <div id="areteBox" class="hidden"></div>
+  <div class="card" id="boxVoci">
+    <label class="f">Altre voci</label>
+    <label class="f chk"><input type="checkbox" id="fStrumOn"> Indagine strumentale</label>
+    <div id="strumFields" class="voce hidden">
+      <label class="f">Tipo di strumentale</label>
+      <input type="text" id="fStrum" list="strumList" autocomplete="off" placeholder="es. resistografo">
+      <datalist id="strumList"><option value="Resistografo"><option value="Tomografo sonico"><option value="Tomografo elettrico"><option value="Prova di trazione"></datalist>
+      <label class="f">Esito della prova (rischio)</label>
+      <div class="seg" id="segEsito"><button data-v="Basso">Basso</button><button data-v="Medio">Medio</button><button data-v="Alto">Alto</button></div>
+      <label class="f">Note</label>
+      <textarea id="fStrumNote"></textarea>
+      <label class="f">Allegati (grafici o file dello strumento)</label>
+      <input type="file" id="fAllegati" multiple>
+      <div class="muted" id="allegatiInfo"></div>
+    </div>
+    <label class="f chk"><input type="checkbox" id="fPotOn" data-box="potBox"> Potatura</label>
+    <div id="potBox" class="voce hidden"><textarea id="fPotNote" placeholder="Note sulla potatura"></textarea></div>
+    <label class="f chk"><input type="checkbox" id="fScavoOn" data-box="scavoBox"> Scavo</label>
+    <div id="scavoBox" class="voce hidden"><textarea id="fScavoNote" placeholder="Note sullo scavo"></textarea></div>
+    <label class="f chk"><input type="checkbox" id="fAltroOn" data-box="altroBox"> Altro</label>
+    <div id="altroBox" class="voce hidden"><textarea id="fAltroNote" placeholder="Note"></textarea></div>
   </div>
 
   <button class="big" id="btnSave">Salva rilievo</button>
@@ -474,16 +490,16 @@
 <div class="toast" id="toast"></div>
 <div id="errBanner" class="hidden"></div>
 
-<script src="config.js?v=0.5"></script>
-<script src="vendor/msal-browser.min.js?v=0.5"></script>
-<script src="vendor/piexif.js?v=0.5"></script>
-<script src="vendor/jszip.min.js?v=0.5"></script>
-<script src="vendor/docx.min.js?v=0.5"></script>
-<script src="vendor/qrcode.js?v=0.5"></script>
-<script src="vendor/leaflet.js?v=0.5"></script>
-<script src="arete.js?v=0.5"></script>
-<script src="output.js?v=0.5"></script>
-<script src="app.js?v=0.5"></script>
-<script src="import.js?v=0.5"></script>
+<script src="config.js?v=0.5.1"></script>
+<script src="vendor/msal-browser.min.js?v=0.5.1"></script>
+<script src="vendor/piexif.js?v=0.5.1"></script>
+<script src="vendor/jszip.min.js?v=0.5.1"></script>
+<script src="vendor/docx.min.js?v=0.5.1"></script>
+<script src="vendor/qrcode.js?v=0.5.1"></script>
+<script src="vendor/leaflet.js?v=0.5.1"></script>
+<script src="arete.js?v=0.5.1"></script>
+<script src="output.js?v=0.5.1"></script>
+<script src="app.js?v=0.5.1"></script>
+<script src="import.js?v=0.5.1"></script>
 </body>
 </html>
