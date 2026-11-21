@@ -3,7 +3,7 @@
  * salvataggio offline (IndexedDB) e sincronizzazione su OneDrive (Microsoft Graph). */
 "use strict";
 
-const APP_VERSION = "0.5.6";
+const APP_VERSION = "0.5.7";
 const CFG = window.APP_CONFIG || {};
 // errori imprevisti: mostrati in rosso in alto, per capire subito cosa non va
 function showErr(msg) {
@@ -64,7 +64,7 @@ const DB = {
 
 /* ---------------------------------------------------------- Settings */
 const S = { basemap: "osm", prjColors: {}, prjOff: [], folder: "Rilievi", name: "", init: "", north: "T", decl: 3.5, quality: 2048, arrow: true,
-  provider: "", msClientId: "", gClientId: "", setupDone: false, areteOn: false, protocollo: "SIA", gradiFoto: false, scanHint: true, clino: true, mapColor: "prj", mapFilter: "",
+  provider: "", msClientId: "", gClientId: "", setupDone: false, areteOn: false, protocollo: "SIA", gradiFoto: false, etichette: true, clino: true, mapColor: "prj", mapFilter: "",
   studio: "", qualifica: "", out: { schede: true, arete: true, foto: true, riepilogo: true, vettoriale: false } };
 async function loadSettings() {
   const v = await DB.getKV("settings");
@@ -422,6 +422,13 @@ const ProjMap = {
       bindSwatches(el.querySelector(".pl-pal"), n, (c) => { el.querySelector(".pl-col").style.background = c; el.querySelector(".pl-pal").classList.add("hidden"); });
     });
   },
+  locate() {
+    const go = (f) => this.map && f && this.map.setView([f.lat, f.lon], Math.max(this.map.getZoom(), 18));
+    const f = GPS.current ? GPS.current() : GPS.last;
+    if (f) { go(f); return; }
+    GPS.start(); toast("Cerco la tua posizione…");
+    let n = 0; const t = setInterval(() => { const g = GPS.last; if (g || ++n > 30) { clearInterval(t); if (g) go(g); else toast("Posizione non disponibile"); } }, 500);
+  },
   async fit() {
     const g = await this.groups(), pts = [];
     Object.keys(g).filter((n) => this.isOn(n)).forEach((n) => g[n].forEach((r) => hasPos(r) && pts.push([r.posizione.lat, r.posizione.lon])));
@@ -587,7 +594,7 @@ let draft = null;
 function newDraft() {
   return { id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2),
     createdAt: Date.now(), dataValutazione: isoToday(), status: "pending", tipoValutazione: "Valutazione",
-    strumOn: false, esitoProva: "", foto: [], allegati: [], nomeV: 2 };  // nomeV 2 = nome senza «Valutazione» (dalla 0.5.5)
+    strumOn: false, esitoProva: "", foto: [], allegati: [], nomeV: 2, etichetteOn: S.etichette !== false };  // nomeV 2 = nome senza «Valutazione» (dalla 0.5.5)
 }
 function isoToday() { const d = new Date(), p = (n) => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; }
 // vecchi rilievi: "Fitostatica" e "Strumentale" ora sono entrambi "Valutazione"
@@ -685,23 +692,15 @@ function readInterventi() { return intSel.map((x) => ({ nome: x.nome, tempo: x.t
 const intTxt = (r) => (r.interventiProposti || []).map((x) => x.nome + (x.tempo ? ` (${x.tempo})` : "")).join("; ");
 function updateIdReq() { $("#idReq").classList.toggle("ok", !!($("#fNgs").value.trim() || $("#fNcart").value.trim() || $("#fNprog").value.trim())); }
 let editingId = null;
-// «Copia dalla pianta precedente»: l'ultima pianta rilevata nello stesso progetto (utile nei filari)
-let prevTree = null;
-async function updateCopyPrev() {
-  const prj = ($("#fLavoro").value || "").trim(), btn = $("#btnCopyPrev");
-  prevTree = null;
-  if (prj && draft) prevTree = (await DB.all()).filter((r) => r.lavoro === prj && !isTodo(r) && r.id !== draft.id)
-    .sort((a, b) => (b.modificatoIl || b.createdAt) - (a.modificatoIl || a.createdAt))[0] || null;
-  btn.classList.toggle("hidden", !prevTree || !!editingId);
-  if (prevTree) btn.textContent = `↺ Copia dalla pianta precedente (${numeri(prevTree).join(" ") || "senza numero"}${prevTree.specie ? " · " + prevTree.specie : ""})`;
-}
-async function copyPrev() {
-  const t = prevTree; if (!t || !draft) return;
+// «⧉ Copia» dalla scheda di una pianta: nuovo rilievo nello stesso progetto con specie, protocollo, CPC e interventi
+async function copyFrom(id) {
+  const t = await DB.get(id); if (!t) return;
+  await openForm(t.lavoro); if (!draft) return;
   $("#fSpecie").value = t.specie || "";
   await setProtocollo(t.protocollo || "SIA");
   $("#fCpc").value = t.protocollo === "SIA" ? t.cpc || "" : "";
   renderInterventi((t.interventiProposti || []).map((x) => ({ ...x })));
-  toast("Copiati specie, protocollo, CPC e interventi: controlla e modifica se serve");
+  toast(`Copiati da ${numeri(t).join(" ") || "pianta"}: specie, protocollo, CPC e interventi. Inserisci il numero della nuova pianta.`, 4500);
 }
 async function openForm(project) {
   if (!S.name || !S.init) { toast("Prima inserisci il nome del rilevatore e le iniziali"); openWizard(); return; }
@@ -715,7 +714,6 @@ async function openForm(project) {
   $("#formWho").textContent = `Rilevatore: ${S.name} (${S.init})`;
   draft.tipoValutazione = "Valutazione";
   updateNamePreview();
-  $("#btnScanHelp").classList.toggle("hidden", !S.scanHint); $("#scanHelp").classList.add("hidden");
   $("#btnClino").classList.toggle("hidden", !S.clino);
   GPS.fixed = null; GPS.best = null; GPS.start();
   $("#gpsInfo").textContent = "In attesa del GPS…";
@@ -731,7 +729,6 @@ async function openForm(project) {
   formMap.ensure(); formMap.refresh();
   setTimeout(() => { const f = GPS.current(); if (f) { updateGpsUI(); formMapFollowGps(f); } }, 150);
   updateNamePreview();
-  updateCopyPrev();
 }
 // Apre la scheda già compilata: pianta "da fare" importata da un elenco, oppure rilievo esistente da modificare
 async function loadIntoForm(t, edit) {
@@ -809,7 +806,7 @@ function renderThumbs() {
     d.className = "th";
     const url = URL.createObjectURL(p.thumb);
     d.innerHTML = `<img src="${url}" data-i="${i}"><button class="del" data-i="${i}">×</button>
-      <select class="lbl" data-i="${i}"><option value="">etichetta…</option>${ETICHETTE.map((e) => `<option${p.etichetta === e ? " selected" : ""}>${e}</option>`).join("")}</select>
+      ${draft.etichetteOn === false ? "" : `<select class="lbl" data-i="${i}"><option value="">etichetta…</option>${ETICHETTE.map((e) => `<option${p.etichetta === e ? " selected" : ""}>${e}</option>`).join("")}</select>`}
       ${S.gradiFoto ? `<div class="cap">${p.heading !== null && p.heading !== undefined ? Math.round(p.heading) + "° " + cardinal(p.heading) : "senza bussola"}${p.compassBad ? " ⚠" : ""}</div>` : ""}`;
     box.appendChild(d);
   });
@@ -1631,8 +1628,8 @@ function show(id) {
 }
 async function renderSettings() {
   $("#sFolder").value = S.folder; $("#sName").value = S.name; $("#sInit").value = S.init; $("#sDecl").value = S.decl;
-  setSeg("segQuality", S.quality); setSeg("segProv", S.provider); setSeg("segGradi", S.gradiFoto ? "1" : "0");
-  setSeg("segScan", S.scanHint ? "1" : "0"); setSeg("segClino", S.clino ? "1" : "0");
+  setSeg("segQuality", [2048, 3000, 0].includes(Number(S.quality)) ? Number(S.quality) : 2048); setSeg("segProv", S.provider); setSeg("segGradi", S.gradiFoto ? "1" : "0");
+  setSeg("segEtichette", S.etichette ? "1" : "0"); setSeg("segClino", S.clino ? "1" : "0"); setSeg("segArrowSet", S.arrow ? "1" : "0");
   $("#sStudio").value = S.studio || ""; $("#sQual").value = S.qualifica || "";
   renderOutChecks($("#setOut"), S.out, (k, v) => { S.out[k] = v; saveSettings(); });
   const A = providerAuth();
@@ -1708,25 +1705,15 @@ async function main() {
   $("#fLavoroSel").addEventListener("change", (e) => {
     const v = e.target.value;
     if (v === "__new") { showNewLavoro(true, ""); $("#fLavoro").focus(); } else showNewLavoro(false, v);
-    updateNamePreview(); checkDuplicate(); updateCopyPrev();
-  });
-  $("#fLavoro").addEventListener("change", updateCopyPrev);
-  $("#btnCopyPrev").addEventListener("click", copyPrev);
-  $("#btnScanHelp").addEventListener("click", (e) => {
-    e.preventDefault();
-    const env = Install.env(), box = $("#scanHelp");
-    box.innerHTML = env.ios
-      ? "<p><b>iPhone:</b> tocca il campo <b>N. cart</b> (o N. gs), poi toccalo ancora e scegli <b>«Scansiona testo»</b> (l'icona con le righe tra parentesi). Inquadra il numero del cartellino e tocca <b>Inserisci</b>.</p>"
-      : env.android
-        ? "<p><b>Android:</b> tocca il campo <b>N. cart</b> (o N. gs); nella tastiera Gboard tocca l'icona con i quattro quadratini o la fotocamera e scegli <b>«Scansiona testo»</b> (o usa Google Lens e copia il numero). Inquadra il cartellino e conferma.</p>"
-        : "<p>Su telefono: tocca il campo del numero e usa la funzione della tastiera che legge il testo con la fotocamera («Scansiona testo»).</p>";
-    box.classList.toggle("hidden");
+    updateNamePreview(); checkDuplicate();
   });
   $("#btnClino").addEventListener("click", (e) => { e.preventDefault(); Clino.open((h) => { $("#fAlt").value = h; toast(`Altezza inserita: ${h} m`); }); });
   Clino.bind();
   document.querySelectorAll(".helpbtn[data-help]").forEach((b) => b.addEventListener("click", (e) => { e.preventDefault(); $("#" + b.dataset.help).classList.toggle("hidden"); }));
-  bindSeg("segScan", (v) => { S.scanHint = v === "1"; saveSettings(); });
-  bindSeg("segClino", (v) => { S.clino = v === "1"; saveSettings(); });
+  bindSeg("segEtichette", (v) => { S.etichette = v === "1"; saveSettings(); });
+  bindSeg("segArrowSet", (v) => { S.arrow = v === "1"; saveSettings(); $("#btnArrow").textContent = "Freccia N: " + (S.arrow ? "sì" : "no"); $("#btnArrow").classList.toggle("on", S.arrow); $("#camArrow").classList.toggle("hidden", !S.arrow); });
+  $("#btnCopy").addEventListener("click", () => current && copyFrom(current.id));
+  $("#btnPmMe").addEventListener("click", () => ProjMap.locate());  bindSeg("segClino", (v) => { S.clino = v === "1"; saveSettings(); });
   bindSeg("segColor", (v) => { S.mapColor = v; saveSettings(); ProjMap.renderControls(); ProjMap.plot(); });
   $("#pmFilter").addEventListener("change", (e) => { S.mapFilter = e.target.value; saveSettings(); ProjMap.plot(); });
   $("#btnAreteHelp").addEventListener("click", (e) => { e.preventDefault(); $("#areteHelp").classList.toggle("hidden"); });

@@ -121,7 +121,8 @@ const OUT = (() => {
     const fotoBlob = (f) => f.arrow || f.clean;
     const dirTxt = (f) => (f.heading !== null && f.heading !== undefined ? `direzione dello scatto ${Math.round(f.heading)}° ${cardinal(f.heading)}` : "");
     // didascalia: «Figura N», con la direzione dello scatto solo se attiva in Impostazioni → Bussola
-    const capTxt = (i, f) => [`Figura ${i}` + (f.etichetta ? " – " + f.etichetta : ""), typeof S !== "undefined" && S.gradiFoto ? dirTxt(f) : ""].filter(Boolean).join(" · ");
+    // etichetta solo se il rilievo è stato fatto con le etichette attive (così ogni progetto resta coerente)
+    const capTxt = (i, f) => [`Figura ${i}` + (f.etichetta && r.etichetteOn !== false ? " – " + f.etichetta : ""), typeof S !== "undefined" && S.gradiFoto ? dirTxt(f) : ""].filter(Boolean).join(" · ");
     const nums = numeri(r).join(" · ") || "—";
     const isArete = r.protocollo === "ARETE";
     const protTxt = isArete ? "ARETÉ" : r.protocollo === "SIA" ? "SIA" : "";

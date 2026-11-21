@@ -9,7 +9,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="RilieviCampo">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="stylesheet" href="vendor/leaflet.css?v=0.5.6">
+<link rel="stylesheet" href="vendor/leaflet.css?v=0.5.7">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="icon" href="icons/icon-192.png">
 <title>Rilievi di Campo-GabTree</title>
@@ -152,6 +152,9 @@
   .cl-res { font-size: 22px; font-weight: 800; text-align: center; margin: 8px 0; color: #b9f6ca; min-height: 26px; }
   .cl-panel .big { font-size: 16px; padding: 13px; }
   .cl-panel #clUse:disabled { opacity: .4; }
+  .mapbtn2 { top: 62px; }
+  .seg3 button { display: flex; flex-direction: column; align-items: center; line-height: 1.2; padding-top: 8px; padding-bottom: 8px; }
+  .seg3 button small { font-size: 11px; font-weight: 500; opacity: .8; margin-top: 2px; }
   #btnSync.attn { background: var(--verde); color: #fff; }
   .item .selbox { width: 24px; height: 24px; flex: 0 0 auto; margin: 0 4px 0 0; pointer-events: none; }
   .item.sel { background: #e8f1ea; }
@@ -327,9 +330,7 @@
   </div>
 
   <div class="card">
-    <label class="f">Id pianta <span class="req" id="idReq">*</span>
-      <button type="button" class="scanbtn hidden" id="btnScanHelp">📷 Leggi il cartellino</button></label>
-    <div id="scanHelp" class="helpbox hidden"></div>
+    <label class="f">Id pianta <span class="req" id="idReq">*</span></label>
     <div class="row">
       <div><label class="f">N. gs</label><input type="text" inputmode="numeric" id="fNgs"></div>
       <div><label class="f">N. cart</label><input type="text" inputmode="numeric" id="fNcart"></div>
@@ -361,7 +362,6 @@
   </div>
 
   <div class="card">
-    <button type="button" class="copybtn hidden" id="btnCopyPrev"></button>
     <label class="f">Specie</label>
     <input type="text" id="fSpecie" list="specieList" autocomplete="off" placeholder="Scrivi per cercare">
     <datalist id="specieList"></datalist>
@@ -433,7 +433,8 @@
 <section id="pmap" class="screen">
   <header class="bar"><h1>Mappa</h1></header>
   <div class="card mapcard"><div id="pmapMap"></div>
-    <button class="mapbtn" id="btnPmFit" title="Inquadra i progetti accesi">⤢</button></div>
+    <button class="mapbtn" id="btnPmFit" title="Inquadra i progetti accesi">⤢</button>
+    <button class="mapbtn mapbtn2" id="btnPmMe" title="Torna alla mia posizione">◎</button></div>
   <div class="card">
     <label class="f" style="margin-top:0">Colora per</label>
     <div class="seg" id="segColor"><button data-v="prj">Progetto</button><button data-v="cpc">Classe CPC</button></div>
@@ -499,7 +500,10 @@
     <div class="muted">Trascina il pallino verde per correggere la posizione.</div>
     <button class="big hidden" id="btnSavePos" style="margin-top:8px">Salva nuova posizione</button></div>
   <div class="card"><div class="thumbs" id="detThumbs"></div></div>
-  <button class="big" id="btnEdit" style="margin-bottom:8px">Modifica rilievo</button>
+  <div class="row" style="margin-bottom:8px">
+    <button class="big" id="btnEdit">✏️ Modifica</button>
+    <button class="big sec" id="btnCopy" style="flex:0 0 38%" title="Nuovo rilievo con gli stessi dati">⧉ Copia</button>
+  </div>
   <div class="row">
     <button class="big sec" id="btnShare">Condividi file</button>
     <button class="big sec" id="btnDelete" style="color:var(--rosso)">Elimina</button>
@@ -544,23 +548,30 @@
   </div>
   <div class="card">
     <label class="f" style="font-size:16px">Strumenti in campo</label>
-    <label class="f">Aiuto lettura cartellino <button type="button" class="helpbtn" data-help="helpScan">?</button></label>
-    <div id="helpScan" class="helpbox hidden"><p>Nel nuovo rilievo compare il pulsante <b>📷 Leggi il cartellino</b> accanto a «Id pianta». Spiega come usare la funzione del telefono che legge il testo con la fotocamera e lo scrive nel campo: su iPhone «Scansiona testo» nella tastiera, su Android lo scanner di testo della tastiera (Gboard) o Google Lens.</p><p>Non serve la rete e non viene salvata nessuna foto.</p></div>
-    <div class="seg" id="segScan"><button data-v="1">Sì</button><button data-v="0">No</button></div>
     <label class="f">Misura dell'altezza con il telefono <button type="button" class="helpbtn" data-help="helpClino">?</button></label>
     <div id="helpClino" class="helpbox hidden"><p>Accanto ad «Altezza» compare <b>📐 Misura</b>. Allontanati dall'albero (meglio a una distanza simile all'altezza), inquadra la <b>cima</b> con la linea al centro e tocca «Segna cima», poi la <b>base</b> e «Segna base»; scrivi la <b>distanza orizzontale</b> dal tronco (in metri, misurata o a passi).</p><p>L'app calcola: altezza = distanza × (tan angolo cima − tan angolo base). Non serve l'altezza degli occhi. È una <b>stima</b>: l'errore dipende soprattutto dalla distanza e dal vedere bene la cima.</p></div>
     <div class="seg" id="segClino"><button data-v="1">Sì</button><button data-v="0">No</button></div>
   </div>
   <div class="card">
-    <label class="f" style="font-size:16px">Bussola</label>
+    <label class="f" style="font-size:16px">Foto</label>
+    <label class="f">Dimensione foto</label>
+    <div class="seg seg3" id="segQuality"><button data-v="2048">Ridotta<small>2048 px · ~0,5–1 MB</small></button><button data-v="3000">Media<small>3000 px · ~1–2 MB</small></button><button data-v="0">Piena<small>originale · ~2–5 MB</small></button></div>
+    <div class="muted">Peso indicativo per foto; con la freccia N si salvano due versioni.</div>
+    <label class="f">Freccia N sulle foto</label>
+    <div class="seg" id="segArrowSet"><button data-v="1">Sì</button><button data-v="0">No</button></div>
+    <div class="muted">Salva anche una copia con la freccia del nord. Si cambia anche dalla fotocamera.</div>
+    <label class="f">Etichette foto</label>
+    <div class="seg" id="segEtichette"><button data-v="1">Sì</button><button data-v="0">No</button></div>
+    <div class="muted">Menu sotto le miniature (colletto, fusto, chioma…) che finisce nella didascalia Word. Vale per i rilievi nuovi.</div>
     <label class="f">Gradi sotto le foto</label>
     <div class="seg" id="segGradi"><button data-v="1">Sì</button><button data-v="0">No</button></div>
     <div class="muted">Mostra la direzione dello scatto (es. 160° S) sotto le miniature e nelle didascalie della scheda Word. Resta comunque salvata dentro la foto.</div>
+  </div>
+  <div class="card">
+    <label class="f" style="font-size:16px">Bussola</label>
     <label class="f">Declinazione magnetica (°, est positiva)</label>
     <input type="number" inputmode="decimal" step="0.1" id="sDecl">
     <div class="muted">Lazio/Italia centrale: circa +3,5° (2026). Si aggiunge al nord magnetico per ottenere quello geografico.</div>
-    <label class="f">Dimensione foto</label>
-    <div class="seg" id="segQuality"><button data-v="2048">Ridotta (veloce)</button><button data-v="0">Piena</button></div>
   </div>
   <div class="card"><label class="f">Diagnostica</label><div class="muted" id="verInfo"></div></div>
 </section>
@@ -605,19 +616,19 @@
 <div class="toast" id="toast"></div>
 <div id="errBanner" class="hidden"></div>
 
-<script src="config.js?v=0.5.6"></script>
-<script src="vendor/msal-browser.min.js?v=0.5.6"></script>
-<script src="vendor/piexif.js?v=0.5.6"></script>
-<script src="vendor/jszip.min.js?v=0.5.6"></script>
-<script src="vendor/docx.min.js?v=0.5.6"></script>
-<script src="vendor/qrcode.js?v=0.5.6"></script>
-<script src="vendor/leaflet.js?v=0.5.6"></script>
-<script src="arete.js?v=0.5.6"></script>
-<script src="output.js?v=0.5.6"></script>
-<script src="install.js?v=0.5.6"></script>
-<script src="viewer.js?v=0.5.6"></script>
-<script src="tools.js?v=0.5.6"></script>
-<script src="app.js?v=0.5.6"></script>
-<script src="import.js?v=0.5.6"></script>
+<script src="config.js?v=0.5.7"></script>
+<script src="vendor/msal-browser.min.js?v=0.5.7"></script>
+<script src="vendor/piexif.js?v=0.5.7"></script>
+<script src="vendor/jszip.min.js?v=0.5.7"></script>
+<script src="vendor/docx.min.js?v=0.5.7"></script>
+<script src="vendor/qrcode.js?v=0.5.7"></script>
+<script src="vendor/leaflet.js?v=0.5.7"></script>
+<script src="arete.js?v=0.5.7"></script>
+<script src="output.js?v=0.5.7"></script>
+<script src="install.js?v=0.5.7"></script>
+<script src="viewer.js?v=0.5.7"></script>
+<script src="tools.js?v=0.5.7"></script>
+<script src="app.js?v=0.5.7"></script>
+<script src="import.js?v=0.5.7"></script>
 </body>
 </html>
