@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Installa Rilievi di Campo – GabTree</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="theme-color" content="#2e5e3e">
+<style>
+body{font-family:-apple-system,system-ui,Arial,sans-serif;max-width:620px;margin:0 auto;padding:24px 18px 60px;line-height:1.5;color:#1f2a22;background:#f6f7f5}
+.top{display:flex;align-items:center;gap:12px}.top img{width:64px;height:64px;border-radius:14px}
+h1{color:#2e5e3e;font-size:22px;margin:0}.card{background:#fff;border-radius:16px;padding:16px;margin-top:16px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.ins-title{display:block;color:#2e5e3e;font-size:18px;margin-bottom:6px}.ins-list{padding-left:22px;margin:6px 0}.ins-list li{margin:6px 0}
+.ins-note{font-size:14px;color:#5c6b60;margin-top:10px}.ins-ok{color:#2e5e3e;font-weight:700}
+.big{width:100%;border:0;border-radius:14px;padding:15px;font-size:17px;font-weight:700;color:#fff;background:#2e5e3e;margin-top:10px;text-decoration:none;display:block;text-align:center}
+.sec{background:#e8f1ea;color:#2e5e3e}.ins-ic{display:inline-block;border:1.5px solid currentColor;border-radius:4px;padding:0 3px;font-size:13px}
+</style></head>
+<body>
+<div class="top"><img src="icons/icon-192.png" alt=""><div><h1>Rilievi di Campo</h1><div>GabTree · app per i rilievi degli alberi</div></div></div>
+<div class="card" id="ins"></div>
+<div class="card">
+  <b class="ins-title">Dopo l'installazione</b>
+  <ol class="ins-list">
+    <li>Apri l'app dall'icona e scrivi nome e iniziali.</li>
+    <li>Scegli dove salvare (OneDrive, Google Drive o cartella) e collega il tuo account.</li>
+    <li>I rilievi si inviano al cloud con il tasto <b>Sincronizza</b> in Home.</li>
+  </ol>
+  <a class="big sec" href="./">Apri l'app nel browser</a>
+</div>
+<script src="install.js"></script>
+<script>Install.render(document.getElementById("ins"));</script>
+</body></html>

@@ -9,7 +9,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="RilieviCampo">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="stylesheet" href="vendor/leaflet.css?v=0.5.2">
+<link rel="stylesheet" href="vendor/leaflet.css?v=0.5.3">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="icon" href="icons/icon-192.png">
 <title>Rilievi di Campo-GabTree</title>
@@ -119,6 +119,29 @@
   .introw input { width: 22px; height: 22px; flex: 0 0 auto; }
   .introw select { flex: 0 0 auto; width: calc(100% - 32px); margin-left: 32px; font-size: 15px; padding: 8px; border-radius: 10px; border: 1px solid #cfd8d1; background: #fff; }
   .req.ok { visibility: hidden; }
+  #btnSync.attn { background: var(--verde); color: #fff; }
+  .item .selbox { width: 24px; height: 24px; flex: 0 0 auto; margin: 0 4px 0 0; pointer-events: none; }
+  .item.sel { background: #e8f1ea; }
+  .selbar { position: fixed; left: 8px; right: 8px; bottom: calc(70px + var(--safe-bot)); z-index: 1001; background: #fff; border-radius: 16px;
+    box-shadow: 0 4px 18px rgba(0,0,0,.18); padding: 8px 10px; }
+  .selrow { display: flex; align-items: center; gap: 8px; }
+  .selrow + .selrow { margin-top: 6px; }
+  #selCount { flex: 1; font-weight: 700; font-size: 15px; }
+  .selbtn { flex: 1 1 0; min-width: 0; border: 0; border-radius: 12px; padding: 11px 4px; font-weight: 700; font-size: 14px; background: var(--chiaro); color: var(--verde); }
+  .selbtn.del { color: var(--rosso); background: #fbeaea; }
+  .selbtn:disabled { opacity: .4; }
+  body.selecting .screen { padding-bottom: calc(190px + var(--safe-bot)); }
+  .ins-title { display: block; color: var(--verde); font-size: 17px; margin-bottom: 4px; }
+  .ins-list { padding-left: 22px; margin: 6px 0; font-size: 16px; } .ins-list li { margin: 5px 0; }
+  .ins-note { font-size: 14px; color: var(--grigio); margin-top: 8px; } .ins-ok { color: var(--verde); font-weight: 700; }
+  .ins-ic { display: inline-block; border: 1.5px solid currentColor; border-radius: 4px; padding: 0 3px; font-size: 13px; }
+  .ins-btn { margin-top: 8px; }
+  .introw2 { display: grid; grid-template-columns: minmax(0, 1fr) 40px; gap: 6px; align-items: center; padding: 8px 0; border-bottom: 1px solid #eee; }
+  .introw2 .int-name { font-weight: 600; font-size: 16px; overflow-wrap: anywhere; }
+  .introw2 select { grid-column: 1 / -1; width: 100%; font-size: 15px; padding: 8px; background: #fff; }
+  .int-del { width: 36px; height: 36px; border-radius: 50%; border: 1px solid #ddd; background: #fff; font-size: 20px; color: var(--rosso); }
+  .int-none { padding: 6px 0 8px; font-style: italic; }
+  #intAdd { background: #fff; margin-top: 6px; }
   #nameprev, #dupWarn, #formWho { overflow-wrap: anywhere; }
   .mapbtn.follow { background: var(--verde); color: #fff; }
   .needle-fixed { position: absolute; left: 50%; top: -6px; transform: translateX(-50%); width: 0; height: 0;
@@ -195,6 +218,7 @@
 <!-- PRIMO AVVIO -->
 <section id="welcome" class="screen">
   <header class="bar"><h1>Benvenuto in Rilievi di Campo</h1></header>
+  <div class="card ins" id="wInstall"></div>
   <div class="card steps">
     <div class="step"><b>Chi sei</b>
       <label class="f">Nome e cognome</label><input type="text" id="wName">
@@ -324,7 +348,9 @@
       <div id="areteBox"></div>
     </div>
     <label class="f">Interventi proposti</label>
-    <div id="intList"></div>
+    <div id="intRows"></div>
+    <div id="intNone" class="muted int-none">Nessun intervento proposto</div>
+    <select id="intAdd"></select>
     <label class="f">Note sugli interventi</label>
     <textarea id="fInt" placeholder="Facoltativo"></textarea>
   </div>
@@ -353,7 +379,7 @@
 
 <!-- LISTA -->
 <section id="list" class="screen">
-  <header class="bar"><h1>Progetti</h1></header>
+  <header class="bar"><h1>Progetti</h1><button class="iconbtn" id="btnSelList">Seleziona</button></header>
   <div class="row">
     <button class="big" id="btnNewPrj">+ Nuovo progetto</button>
     <button class="big sec" id="btnListImport">Importa elenco</button>
@@ -411,18 +437,14 @@
 
 <!-- PROGETTO -->
 <section id="project" class="screen">
-  <header class="bar"><button class="iconbtn" id="btnPrjBack">‹ Progetti</button><h1 id="prjTitle">Progetto</h1></header>
+  <header class="bar"><button class="iconbtn" id="btnPrjBack">‹ Progetti</button><h1 id="prjTitle">Progetto</h1><button class="iconbtn" id="btnSelPrj">Seleziona</button></header>
   <div class="muted" id="prjProg" style="margin:-4px 0 8px"></div>
   <button class="big" id="btnPrjNew">+ Nuovo rilievo in questo progetto</button>
   <button class="big sec" id="btnPrjImport" style="margin-top:8px">Importa piante da un elenco</button>
   <div class="card" style="margin-top:12px"><label class="f">Colore sulla mappa</label><div id="prjColor"></div></div>
   <div class="card" id="prjBox" style="margin-top:12px"></div>
-  <div class="card">
-    <label class="f">File del progetto nel cloud</label>
-    <div class="outchk" id="prjOut"></div>
-    <button class="big sec" id="btnPrjExport" style="margin-top:8px">Crea / aggiorna i file scelti</button>
-    <div class="muted" id="prjExportInfo" style="margin-top:6px"></div>
-  </div>
+  <button class="big sec" id="btnPrjReload">Ricarica tutto il progetto sul cloud</button>
+  <div class="muted" id="prjExportInfo" style="margin:6px 0 10px"></div>
   <button class="big sec hidden" id="btnPrjTodoDel" style="color:var(--rosso)">Elimina le piante ancora da fare</button>
 </section>
 
@@ -445,6 +467,7 @@
 <!-- IMPOSTAZIONI -->
 <section id="settings" class="screen">
   <header class="bar"><h1>Impostazioni</h1></header>
+  <div class="card ins" id="sInstall"></div>
   <div class="card">
     <label class="f">Opzioni di salvataggio</label>
     <div class="seg" id="segProv"><button data-v="onedrive">OneDrive</button><button data-v="google">Google Drive</button><button data-v="local">Cartella locale</button></div>
@@ -480,6 +503,14 @@
   <div class="card"><label class="f">Diagnostica</label><div class="muted" id="verInfo"></div></div>
 </section>
 
+<div id="selBar" class="selbar hidden">
+  <div class="selrow"><span id="selCount"></span><button type="button" class="linkbtn" id="selAll">Tutti</button><button type="button" class="linkbtn" id="selCancel">Annulla</button></div>
+  <div class="selrow">
+    <button type="button" class="selbtn" id="selSync">⟳ Sincronizza</button>
+    <button type="button" class="selbtn" id="selFree">⇣ Libera spazio</button>
+    <button type="button" class="selbtn del" id="selDel">🗑 Elimina</button>
+  </div>
+</div>
 <nav class="tabs">
   <button data-go="home" class="on"><span class="ic">🏠</span>Home</button>
   <button data-go="list"><span class="ic">🗂️</span>Progetti</button>
@@ -489,16 +520,17 @@
 <div class="toast" id="toast"></div>
 <div id="errBanner" class="hidden"></div>
 
-<script src="config.js?v=0.5.2"></script>
-<script src="vendor/msal-browser.min.js?v=0.5.2"></script>
-<script src="vendor/piexif.js?v=0.5.2"></script>
-<script src="vendor/jszip.min.js?v=0.5.2"></script>
-<script src="vendor/docx.min.js?v=0.5.2"></script>
-<script src="vendor/qrcode.js?v=0.5.2"></script>
-<script src="vendor/leaflet.js?v=0.5.2"></script>
-<script src="arete.js?v=0.5.2"></script>
-<script src="output.js?v=0.5.2"></script>
-<script src="app.js?v=0.5.2"></script>
-<script src="import.js?v=0.5.2"></script>
+<script src="config.js?v=0.5.3"></script>
+<script src="vendor/msal-browser.min.js?v=0.5.3"></script>
+<script src="vendor/piexif.js?v=0.5.3"></script>
+<script src="vendor/jszip.min.js?v=0.5.3"></script>
+<script src="vendor/docx.min.js?v=0.5.3"></script>
+<script src="vendor/qrcode.js?v=0.5.3"></script>
+<script src="vendor/leaflet.js?v=0.5.3"></script>
+<script src="arete.js?v=0.5.3"></script>
+<script src="output.js?v=0.5.3"></script>
+<script src="install.js?v=0.5.3"></script>
+<script src="app.js?v=0.5.3"></script>
+<script src="import.js?v=0.5.3"></script>
 </body>
 </html>

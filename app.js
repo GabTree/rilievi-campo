@@ -3,7 +3,7 @@
  * salvataggio offline (IndexedDB) e sincronizzazione su OneDrive (Microsoft Graph). */
 "use strict";
 
-const APP_VERSION = "0.5.2";
+const APP_VERSION = "0.5.3";
 const CFG = window.APP_CONFIG || {};
 // errori imprevisti: mostrati in rosso in alto, per capire subito cosa non va
 function showErr(msg) {
@@ -614,21 +614,51 @@ function formMapFollowGps(f) {
 
 /* --------------------------------------------------------- Scheda */
 // interventi proposti (in ordine alfabetico) e tempi di prescrizione
-const INTERVENTI = ["Ampliamento formella", "Potatura di contenimento", "Potatura di risanamento", "Prova di trazione", "Resistografia base",
-  "Resistografia in quota", "Scavo", "Tomografia base", "Tomografia in quota"];
-const TEMPI = ["entro 90 giorni", "entro 365 giorni", "tra 6 mesi", "tra 1 anno", "tra 2 anni", "tra 3 anni", "tra 4 anni"];
-function renderInterventi(sel = []) {
-  const box = $("#intList");
-  box.innerHTML = INTERVENTI.map((n, i) => {
-    const cur = sel.find((x) => x.nome === n);
-    return `<div class="introw"><label><input type="checkbox" data-i="${i}"${cur ? " checked" : ""}> ${esc(n)}</label>
-      <select data-i="${i}" class="${cur ? "" : "hidden"}"><option value="">— tempi di prescrizione —</option>${TEMPI.map((t) => `<option${cur && cur.tempo === t ? " selected" : ""}>${t}</option>`).join("")}</select></div>`;
+const INTERVENTI = ["Abbattimento", "Ampliamento formella", "Potatura di contenimento", "Potatura di risanamento", "Prova di trazione",
+  "Resistografia base", "Resistografia in quota", "Ricontrollo visivo", "Scavo", "Tomografia base", "Tomografia in quota"];
+const TEMPI = ["entro 30 giorni", "entro 90 giorni", "entro 6 mesi", "entro 1 anno", "tra 1 anno", "tra 2 anni", "tra 3 anni", "tra 4 anni"];
+// ricontrollo visivo proposto in automatico in base alla nuova CPC (protocollo SIA)
+const RICONTROLLO = { A: "tra 4 anni", B: "tra 3 anni", C: "tra 2 anni" };
+const CPC_CON_INTERVENTO = ["C/D", "D"];
+const TEMPO_DEFAULT = { Abbattimento: "entro 30 giorni" };
+let intSel = [];      // [{ nome, tempo, auto }]
+let ricTolto = false; // l'utente ha tolto il ricontrollo automatico: non lo ripropongo finché non cambia la CPC
+function renderInterventi(sel) {
+  if (sel) { intSel = sel.map((x) => ({ ...x })); ricTolto = false; }
+  intSel.sort((a, b) => INTERVENTI.indexOf(a.nome) - INTERVENTI.indexOf(b.nome));
+  const box = $("#intRows");
+  box.innerHTML = intSel.map((x, i) => {
+    const tempi = x.tempo && !TEMPI.includes(x.tempo) ? [x.tempo, ...TEMPI] : TEMPI; // tempi delle versioni precedenti
+    return `<div class="introw2"><div class="int-name">${esc(x.nome)}${x.auto ? ' <span class="muted">(da CPC)</span>' : ""}</div>
+      <button type="button" class="int-del" data-i="${i}" aria-label="Togli">×</button>
+      <select data-i="${i}"><option value="">— tempi di prescrizione —</option>${tempi.map((t) => `<option${x.tempo === t ? " selected" : ""}>${t}</option>`).join("")}</select></div>`;
   }).join("");
-  box.querySelectorAll("input").forEach((c) => c.addEventListener("change", () => box.querySelector(`select[data-i="${c.dataset.i}"]`).classList.toggle("hidden", !c.checked)));
+  $("#intNone").classList.toggle("hidden", intSel.length > 0);
+  $("#intAdd").innerHTML = `<option value="">+ Aggiungi intervento</option>` +
+    INTERVENTI.filter((n) => !intSel.some((x) => x.nome === n)).map((n) => `<option>${esc(n)}</option>`).join("");
+  box.querySelectorAll("select").forEach((s) => s.addEventListener("change", () => { const x = intSel[+s.dataset.i]; x.tempo = s.value; x.auto = false; renderInterventi(); }));
+  box.querySelectorAll(".int-del").forEach((b) => b.addEventListener("click", () => {
+    const x = intSel[+b.dataset.i]; if (x.nome === "Ricontrollo visivo" && x.auto) ricTolto = true;
+    intSel.splice(+b.dataset.i, 1); renderInterventi();
+  }));
 }
-function readInterventi() {
-  return [...$("#intList").querySelectorAll("input:checked")].map((c) => ({ nome: INTERVENTI[+c.dataset.i], tempo: $("#intList").querySelector(`select[data-i="${c.dataset.i}"]`).value }));
+function addIntervento(nome) {
+  if (!nome || intSel.some((x) => x.nome === nome)) return;
+  intSel.push({ nome, tempo: TEMPO_DEFAULT[nome] || "" }); renderInterventi();
 }
+// applica la regola del ricontrollo quando cambia la CPC (o il protocollo)
+function applyRicontrollo(changed) {
+  if (changed) ricTolto = false;
+  const cpc = (draft && draft.protocollo === "SIA") ? $("#fCpc").value : "";
+  const i = intSel.findIndex((x) => x.nome === "Ricontrollo visivo");
+  const t = RICONTROLLO[cpc];
+  if (t) {
+    if (i >= 0) { if (intSel[i].auto) intSel[i].tempo = t; }
+    else if (!ricTolto) intSel.push({ nome: "Ricontrollo visivo", tempo: t, auto: true });
+  } else if (i >= 0 && intSel[i].auto) intSel.splice(i, 1);
+  renderInterventi();
+}
+function readInterventi() { return intSel.map((x) => ({ nome: x.nome, tempo: x.tempo, ...(x.auto ? { auto: true } : {}) })); }
 // testo per schede e tabelle: "Scavo (entro 90 giorni); Prova di trazione (tra 1 anno)"
 const intTxt = (r) => (r.interventiProposti || []).map((x) => x.nome + (x.tempo ? ` (${x.tempo})` : "")).join("; ");
 function updateIdReq() { $("#idReq").classList.toggle("ok", !!($("#fNgs").value.trim() || $("#fNcart").value.trim() || $("#fNprog").value.trim())); }
@@ -690,7 +720,7 @@ async function loadIntoForm(t, edit) {
 async function completeTodo(id) { const t = await DB.get(id); if (t) await loadIntoForm(t, false); }
 async function editRecord(id) { const t = await DB.get(id); if (t) await loadIntoForm(t, true); }
 // protocollo di valutazione: SIA (scelta della CPC) oppure ARETÉ (scheda ARETÉ)
-async function setProtocollo(v) {
+async function setProtocollo(v, user) {
   setSeg("segProtocollo", v);
   if (draft) draft.protocollo = v;
   const tpl = await DB.getKV("areteTemplate");
@@ -698,6 +728,7 @@ async function setProtocollo(v) {
   $("#boxArete").classList.toggle("hidden", v !== "ARETE");
   $("#areteMissing").classList.toggle("hidden", !!tpl);
   $("#areteBox").classList.toggle("hidden", !tpl);
+  if (user) applyRicontrollo(false);
 }
 
 async function fillLavori() {
@@ -761,6 +792,7 @@ async function saveForm() {
   const err = [];
   if (!r.lavoro) err.push("progetto");
   if (!r.ngs && !r.ncart && !r.nprog) err.push("almeno un numero (gs, cart o progressivo)");
+  if (r.protocollo === "SIA" && CPC_CON_INTERVENTO.includes(v("fCpc")) && !r.interventiProposti.length) err.push(`almeno un intervento proposto (obbligatorio con CPC ${v("fCpc")})`);
   if (err.length) { $("#formErr").textContent = "Mancano: " + err.join(", "); return; }
 
   const f = GPS.current();
@@ -799,11 +831,10 @@ async function saveForm() {
   draft = null;
   GPS.fixed = null;
   if (wasEdit) {
-    toast(oldName && oldName !== r.cartella ? "Rilievo modificato. Ha un nome nuovo: i file con il vecchio nome restano nel cloud." : "Rilievo modificato", 4500);
+    toast((oldName && oldName !== r.cartella ? "Rilievo modificato. Ha un nome nuovo: i file con il vecchio nome restano nel cloud." : "Rilievo modificato.") + " Tocca «Sincronizza» per aggiornarlo nel cloud.", 5000);
     openDetail(r.id);
-  } else { toast("Rilievo salvato: " + r.cartella, 3500); show("home"); }
+  } else { toast("Rilievo salvato sul telefono. Per inviarlo al cloud tocca «Sincronizza ora».", 4000); show("home"); }
   refreshCounts();
-  Sync.run();
 }
 
 async function checkDuplicate() {
@@ -838,10 +869,11 @@ async function treeFiles(r, o, onlyData) {
   const out = [];
   if (o.schede) {
     out.push({ path: `Schede/${r.cartella}.docx`, blob: await OUT.schedaDocx(r) });
-    if (!onlyData) r.allegati.forEach((a) => out.push({ path: `Schede/${r.cartella}_allegato_${safe(a.name)}`, blob: a.blob }));
+    if (!onlyData) r.allegati.filter((a) => a.blob).forEach((a) => out.push({ path: `Schede/${r.cartella}_allegato_${safe(a.name)}`, blob: a.blob }));
   }
   if (o.arete !== false && r.areteXlsx) out.push({ path: `Schede ARETE/${r.cartella}_ARETE.xlsx`, blob: r.areteXlsx });
   if (o.foto && !onlyData) r.foto.forEach((f, i) => {
+    if (f.ridotta) return; // copia leggera dopo «Libera spazio»: l'originale è già nel cloud
     out.push({ path: "Foto/" + fotoName(r, i), blob: f.clean });
     if (f.arrow) out.push({ path: "Foto/" + fotoName(r, i, true), blob: f.arrow });
   });
@@ -1133,7 +1165,7 @@ const providerAuth = () => (S.provider === "google" ? GAuth : S.provider === "on
 const Sync = {
   running: false,
   // invia i rilievi in attesa; poi rigenera i file dei progetti toccati
-  async run(manual = false) {
+  async run(manual = false, only = null) {   // only = { ids, projects }: sincronizza solo i selezionati
     if (this.running) return;
     const P = provider(), A = providerAuth();
     if (!P || !A.connected()) { setSyncInfo("Archivio non collegato (Impostazioni)"); if (manual) toast("Collega OneDrive o Google Drive nelle Impostazioni"); return; }
@@ -1141,9 +1173,9 @@ const Sync = {
       if (Local.zipMode && !manual) { setSyncInfo("Tocca «Sincronizza ora» per preparare lo ZIP da salvare sul telefono"); return; }
       try { await Local.ensure(manual); } catch (e) { setSyncInfo(e.message); return; }
     } else if (!navigator.onLine) { if (manual) toast("Nessuna connessione: i rilievi restano sul telefono"); return; }
-    const pending = (await DB.all()).filter((r) => r.status !== "synced" && !isTodo(r));
+    const pending = (await DB.all()).filter((r) => r.status !== "synced" && !isTodo(r) && (!only || only.ids.has(String(r.id))));
     // progetti con tabella riassuntiva / vettoriale mancanti o non aggiornati (es. spunte cambiate dopo l'invio)
-    const stale = await staleProjects();
+    const stale = (await staleProjects()).filter((n) => !only || only.projects.has(n));
     if (!pending.length && !stale.length) { if (manual) toast("Tutto sincronizzato"); setSyncInfo(`Tutto sincronizzato su ${P.name}`); return; }
     this.running = true;
     let ok = 0, lastErr = "";
@@ -1228,7 +1260,9 @@ function setSyncInfo(t) { $("#syncInfo").textContent = t; }
 /* ----------------------------------------------------- Lista/dettaglio */
 async function refreshCounts() {
   const all = (await DB.all()).filter((r) => !isTodo(r));
-  $("#pendingCount").textContent = all.filter((r) => r.status !== "synced").length;
+  const nPend = all.filter((r) => r.status !== "synced").length;
+  $("#pendingCount").textContent = nPend;
+  $("#btnSync").classList.toggle("attn", nPend > 0);
   // contatore delle valutazioni (data della valutazione)
   const now = Date.now(), day = 86400000;
   const age = (r) => (now - new Date((r.dataValutazione || isoToday()) + "T12:00:00").getTime()) / day;
@@ -1257,16 +1291,22 @@ async function renderList() {
     d.innerHTML = `<img src="${withFoto ? URL.createObjectURL(withFoto.foto[0].thumb) : "icons/icon-192.png"}"><div class="t"><b>${esc(n)}</b>
       <span class="muted">${list.length} ${list.length === 1 ? "pianta" : "piante"} · ultimo ${new Date(last).toLocaleDateString("it-IT")}</span></div>
       <span class="badge ${todo ? "todo" : pend ? "pending" : "synced"}">${todo ? todo + " da fare" : pend ? pend + " da inviare" : "inviato"}</span>`;
-    d.addEventListener("click", () => openProject(n));
+    const sel = selBox(d, n);
+    d.addEventListener("click", () => (sel ? Sel.toggle(n) : openProject(n)));
     box.appendChild(d);
   });
   empty.reverse().forEach((n) => {
     const d = document.createElement("div");
     d.className = "item";
     d.innerHTML = `<img src="icons/icon-192.png"><div class="t"><b>${esc(n)}</b><span class="muted">nuovo progetto · nessuna pianta</span></div>`;
-    d.addEventListener("click", () => openProject(n));
+    const sel = selBox(d, n);
+    d.addEventListener("click", () => (sel ? Sel.toggle(n) : openProject(n)));
     box.prepend(d);
   });
+  Sel.all = [...empty, ...names];
+  $("#btnSelList").textContent = Sel.mode === "list" ? "Fine" : "Seleziona";
+  $("#btnSelList").classList.toggle("hidden", !Sel.all.length);
+  if (Sel.mode === "list") Sel.bar();
 }
 let currentProject = null;
 async function openProject(name) {
@@ -1286,16 +1326,126 @@ async function openProject(name) {
     const classe = isTodo(r) ? "tocca per completare il rilievo" : r.protocollo === "ARETE" ? "Protocollo ARETÉ" : r.cpc ? "Classe " + r.cpc : "Classe —";
     d.innerHTML = `<img src="${r.foto[0] ? URL.createObjectURL(r.foto[0].thumb) : "icons/icon-192.png"}"><div class="t"><b>${esc(numeri(r).join(" · ") || "—")}</b>
       <span class="muted">${esc(classe)}</span></div><span class="badge ${st[1]}">${st[0]}</span>`;
-    d.addEventListener("click", () => (isTodo(r) ? completeTodo(r.id) : openDetail(r.id)));
+    const sel = selBox(d, String(r.id));
+    if (r.foto.some((f) => f.ridotta)) d.querySelector(".muted").insertAdjacentHTML("beforeend", " · foto alleggerite");
+    d.addEventListener("click", () => (sel ? Sel.toggle(String(r.id)) : isTodo(r) ? completeTodo(r.id) : openDetail(r.id)));
     box.appendChild(d);
   });
+  Sel.all = list.map((r) => String(r.id));
+  $("#btnSelPrj").textContent = Sel.mode === "prj" ? "Fine" : "Seleziona";
+  $("#btnSelPrj").classList.toggle("hidden", !list.length);
+  if (Sel.mode === "prj") Sel.bar();
   const pc = $("#prjColor"); pc.innerHTML = swatches(name); bindSwatches(pc, name);
-  prjOut = { ...S.out };
-  renderOutChecks($("#prjOut"), prjOut, (k, v) => { prjOut[k] = v; });
   $("#prjExportInfo").textContent = "";
   show("project");
 }
-let prjOut = {};
+/* ------------------------------------------------- Seleziona: sincronizza, libera spazio, elimina */
+// Funziona sia nell'elenco dei progetti (seleziono progetti) sia dentro un progetto (seleziono rilievi).
+const Sel = {
+  mode: null, keys: new Set(), all: [],
+  on(mode) { this.mode = mode; this.keys.clear(); this.bar(); },
+  off() { this.mode = null; this.keys.clear(); $("#selBar").classList.add("hidden"); document.body.classList.remove("selecting"); },
+  toggle(k) { this.keys.has(k) ? this.keys.delete(k) : this.keys.add(k); this.bar(); },
+  bar() {
+    const n = this.keys.size, what = this.mode === "list" ? (n === 1 ? "progetto" : "progetti") : (n === 1 ? "rilievo" : "rilievi");
+    $("#selBar").classList.remove("hidden"); document.body.classList.add("selecting");
+    $("#selCount").textContent = n ? `${n} ${what} selezionat${n === 1 ? "o" : "i"}` : `Tocca per selezionare`;
+    $("#selAll").textContent = n && n === this.all.length ? "Nessuno" : "Tutti";
+    ["selSync", "selFree", "selDel"].forEach((id) => ($("#" + id).disabled = !n));
+    document.querySelectorAll(".item[data-key]").forEach((d) => {
+      const on = this.keys.has(d.dataset.key); d.classList.toggle("sel", on);
+      const c = d.querySelector(".selbox"); if (c) c.checked = on;
+    });
+  },
+  async records() {
+    const all = await DB.all();
+    return this.mode === "list" ? all.filter((r) => this.keys.has(r.lavoro || "(senza progetto)")) : all.filter((r) => this.keys.has(String(r.id)));
+  },
+  refresh(mode = this.mode) { mode === "list" ? renderList() : mode === "prj" ? openProject(currentProject) : null; },
+};
+// selettore all'inizio di una riga
+function selBox(d, key) {
+  d.dataset.key = key;
+  if (!Sel.mode) return false;
+  d.insertAdjacentHTML("afterbegin", `<input type="checkbox" class="selbox"${Sel.keys.has(key) ? " checked" : ""} tabindex="-1">`);
+  d.classList.toggle("sel", Sel.keys.has(key));
+  return true;
+}
+// riduce le foto di un rilievo già inviato a una copia leggera (1200 px): basta per la scheda Word,
+// gli originali restano nel cloud e non vengono più ricaricati (non verrebbero sovrascritti da copie ridotte)
+async function riduciFoto(blob) {
+  const bmp = await createImageBitmap(blob);
+  const k = Math.min(1, 1200 / Math.max(bmp.width, bmp.height));
+  const c = document.createElement("canvas"); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+  c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+  return new Promise((res) => c.toBlob(res, "image/jpeg", 0.8));
+}
+async function liberaSpazio(list) {
+  let n = 0, saved = 0;
+  for (const r of list) {
+    if (r.status !== "synced" || isTodo(r)) continue;
+    let did = false;
+    for (const f of r.foto) {
+      if (f.ridotta) continue;
+      const before = (f.clean ? f.clean.size : 0) + (f.arrow ? f.arrow.size : 0);
+      if (f.arrow) { f.arrow = await riduciFoto(f.arrow); f.clean = null; } // la scheda usa la foto con la freccia
+      else if (f.clean) f.clean = await riduciFoto(f.clean);
+      f.ridotta = true; did = true;
+      saved += before - ((f.clean ? f.clean.size : 0) + (f.arrow ? f.arrow.size : 0));
+    }
+    (r.allegati || []).forEach((a) => { if (a.blob) { saved += a.blob.size || 0; a.blob = null; a.suCloud = true; did = true; } });
+    if (did) { await DB.put(r); n++; }
+  }
+  return { n, mb: saved / 1048576 };
+}
+async function selAction(kind) {
+  const list = await Sel.records();
+  if (!list.length) return;
+  const done = list.filter((r) => !isTodo(r));
+  const mai = done.filter((r) => r.status !== "synced"), todo = list.filter(isTodo);
+  if (kind === "sync") {
+    const projects = new Set(done.map((r) => r.lavoro));
+    if (!done.length) { toast("Nei selezionati ci sono solo piante da fare: non c'è niente da inviare"); return; }
+    const mode = Sel.mode; Sel.off(); Sel.refresh(mode);
+    await Sync.run(true, { ids: new Set(done.map((r) => String(r.id))), projects });
+    Sel.refresh(mode);
+    return;
+  }
+  if (kind === "free") {
+    const ok = done.filter((r) => r.status === "synced");
+    if (!ok.length) { toast("Libera spazio funziona solo sui rilievi già inviati: prima sincronizza"); return; }
+    if (!confirm(`Libera spazio su ${ok.length} ${ok.length === 1 ? "rilievo inviato" : "rilievi inviati"}?\n\nSul telefono le foto restano in una copia leggera (basta per rifare la scheda Word) e gli allegati vengono tolti. Gli originali restano nel cloud. I dati, la mappa e la tabella non cambiano.` + (mai.length ? `\n\n${mai.length} non ancora inviati verranno lasciati come sono.` : ""))) return;
+    toast("Riduco le foto…");
+    const res = await liberaSpazio(ok);
+    const mode = Sel.mode; Sel.off(); Sel.refresh(mode);
+    toast(res.n ? `Spazio liberato: circa ${res.mb.toFixed(res.mb < 10 ? 1 : 0)} MB su ${res.n} rilievi` : "Questi rilievi erano già alleggeriti", 4500);
+    return;
+  }
+  // elimina
+  let msg = Sel.mode === "list"
+    ? `Eliminare dal telefono ${Sel.keys.size === 1 ? "il progetto" : Sel.keys.size + " progetti"} (${list.length} ${list.length === 1 ? "pianta" : "piante"})?`
+    : `Eliminare dal telefono ${list.length} ${list.length === 1 ? "rilievo" : "rilievi"}?`;
+  const nInv = done.length - mai.length;
+  if (nInv) msg += `\n\n${nInv === 1 ? "1 rilievo già inviato: resta" : nInv + " rilievi già inviati: restano"} nel cloud, ${nInv === 1 ? "lo togli" : "li togli"} solo dal telefono.`;
+  if (todo.length) msg += `\n${todo.length === 1 ? "1 pianta da fare: si può" : todo.length + " piante da fare: si possono"} reimportare dall'elenco.`;
+  if (Sel.mode === "prj" && done.length - mai.length) {
+    const rest = (await DB.all()).filter((r) => r.lavoro === currentProject && !isTodo(r) && !Sel.keys.has(String(r.id)));
+    if (rest.length) msg += `\n\nAttenzione: la tabella e il vettoriale del progetto nel cloud vengono rifatti con le piante rimaste sul telefono, quindi alla prossima sincronizzazione queste righe sparirebbero. Per recuperare spazio senza perdere righe usa «Libera spazio».`;
+  }
+  if (!confirm(msg)) return;
+  if (mai.length && !confirm(`⚠️ ${mai.length} ${mai.length === 1 ? "rilievo non è mai stato inviato" : "rilievi non sono mai stati inviati"} al cloud.\nSe ${mai.length === 1 ? "lo elimini andrà perso" : "li elimini andranno persi"} per sempre, foto comprese.\n\nEliminarli comunque?`)) return;
+  for (const r of list) await DB.del(r.id);
+  if (Sel.mode === "list") {
+    const names = [...Sel.keys];
+    const prj = ((await DB.getKV("projects")) || []).filter((n) => !names.includes(n)); await DB.setKV("projects", prj);
+    const sig = (await DB.getKV("projSig")) || {}; names.forEach((n) => delete sig[n]); await DB.setKV("projSig", sig);
+  }
+  const mode = Sel.mode; Sel.off();
+  toast(`Eliminati ${list.length} ${list.length === 1 ? "elemento" : "elementi"} dal telefono`, 3500);
+  refreshCounts(); MapView.plot();
+  if (mode === "prj") { const left = (await DB.all()).some((r) => r.lavoro === currentProject); left ? openProject(currentProject) : show("list"); }
+  else renderList();
+}
 
 let current = null, detPos = null;
 const detMap = new TreeMap("detMap", (lat, lon) => { detPos = { lat, lon }; $("#btnSavePos").classList.remove("hidden"); });
@@ -1332,7 +1482,6 @@ async function saveDetailPos() {
   toast("Posizione aggiornata");
   MapView.plot(); refreshCounts();
   openDetail(current.id);
-  Sync.run();
 }
 async function shareCurrent() {
   toast("Preparo la scheda…");
@@ -1362,6 +1511,7 @@ function show(id) {
   if (id === "list") renderList();
   if (id === "home") MapView.refresh();
   if (id === "pmap") ProjMap.show();
+  if (Sel.mode && !((Sel.mode === "list" && id === "list") || (Sel.mode === "prj" && id === "project"))) Sel.off();
   if (id === "settings") renderSettings();
   window.scrollTo(0, 0);
 }
@@ -1369,7 +1519,7 @@ async function renderSettings() {
   $("#sFolder").value = S.folder; $("#sName").value = S.name; $("#sInit").value = S.init; $("#sDecl").value = S.decl;
   setSeg("segQuality", S.quality); setSeg("segProv", S.provider);
   $("#sStudio").value = S.studio || ""; $("#sQual").value = S.qualifica || "";
-  renderOutChecks($("#setOut"), S.out, (k, v) => { S.out[k] = v; saveSettings(); if (v && (k === "riepilogo" || k === "vettoriale")) Sync.run(); });
+  renderOutChecks($("#setOut"), S.out, (k, v) => { S.out[k] = v; saveSettings(); });
   const A = providerAuth();
   $("#acctInfo").textContent = !A ? "" :
     !A.configured() ? "Manca il codice dell'app: riapri la configurazione iniziale" :
@@ -1414,11 +1564,11 @@ async function main() {
   $("#camArrow").innerHTML = arrowSvg(0);
   Compass.onChange(updateCompassUI);
   setNet();
-  window.addEventListener("online", () => { setNet(); Sync.run(); });
+  window.addEventListener("online", setNet);
   window.addEventListener("offline", setNet);
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) GPS.stop();          // risparmio batteria quando l'app è in secondo piano
-    else { GPS.start(); Sync.run(); }
+    else GPS.start();
   });
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 
@@ -1438,6 +1588,8 @@ async function main() {
     draft = null; GPS.fixed = null;
     back ? openDetail(back) : show("home");
   });
+  $("#intAdd").addEventListener("change", (e) => { addIntervento(e.target.value); e.target.value = ""; });
+  $("#fCpc").addEventListener("change", () => applyRicontrollo(true));
   $("#btnCal").addEventListener("click", () => { const d = $("#fData"); try { d.showPicker(); } catch (e) { d.focus(); d.click(); } });
   ["fNgs", "fNcart", "fNprog"].forEach((id) => $("#" + id).addEventListener("input", updateIdReq));
   $("#btnEdit").addEventListener("click", () => current && editRecord(current.id));
@@ -1452,10 +1604,19 @@ async function main() {
     openProject(n);
   });
   $("#fData").addEventListener("change", updateNamePreview);
-  $("#btnPrjExport").addEventListener("click", () => Sync.exportProject(currentProject, prjOut));
+  $("#btnPrjReload").addEventListener("click", () => {
+    if (confirm("Ricaricare tutto il progetto sul cloud?\n\nSchede, foto, schede ARETÉ, tabella e vettoriale vengono rifatti e sovrascritti nel drive scelto in Impostazioni. Serve per esempio dopo un cambio di drive.")) Sync.exportProject(currentProject, S.out);
+  });
+  $("#btnSelList").addEventListener("click", () => { Sel.mode ? Sel.off() : Sel.on("list"); renderList(); });
+  $("#btnSelPrj").addEventListener("click", () => { Sel.mode ? Sel.off() : Sel.on("prj"); openProject(currentProject); });
+  $("#selCancel").addEventListener("click", () => { const m = Sel.mode; Sel.off(); Sel.refresh(m); });
+  $("#selAll").addEventListener("click", () => { if (Sel.keys.size === Sel.all.length) Sel.keys.clear(); else Sel.all.forEach((k) => Sel.keys.add(k)); Sel.bar(); });
+  $("#selSync").addEventListener("click", () => selAction("sync"));
+  $("#selFree").addEventListener("click", () => selAction("free"));
+  $("#selDel").addEventListener("click", () => selAction("del"));
   $("#sStudio").addEventListener("change", (e) => { S.studio = e.target.value.trim(); saveSettings(); });
   $("#sQual").addEventListener("change", (e) => { S.qualifica = e.target.value.trim(); saveSettings(); });
-  bindSeg("segProtocollo", (v) => setProtocollo(v));
+  bindSeg("segProtocollo", (v) => setProtocollo(v, true));
 
   $("#fLavoro").addEventListener("change", () => checkDuplicate());
   ["fLavoro", "fNgs", "fNcart", "fNprog"].forEach((id) => $("#" + id).addEventListener("input", updateNamePreview));
@@ -1560,6 +1721,8 @@ async function main() {
     renderSettings();
   });
 
+  Install.render($("#wInstall"), { hideIfInstalled: true });
+  Install.render($("#sInstall"));
   // configurazione iniziale
   bindSeg("wProv", (v) => { S.provider = v; saveSettings(); wizardCode(); });
   $("#wName").addEventListener("change", (e) => { S.name = e.target.value.trim(); saveSettings(); });
@@ -1598,6 +1761,7 @@ async function main() {
   await saveSettings();
   if (!S.setupDone) openWizard();
   refreshCounts();
-  Sync.run();
+  if (gBack) Sync.run(true);   // appena collegato (o rinnovato) l'accesso Google: invio quello che c'è
+  else setSyncInfo("L'invio al cloud parte solo con «Sincronizza ora»");
 }
 main();

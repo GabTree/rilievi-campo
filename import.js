@@ -196,7 +196,7 @@ const Importer = (() => {
     String(txt || "").split(/[;\n]+/).map((x) => x.trim()).filter(Boolean).forEach((part) => {
       const p = norm(part);
       const nome = INTERVENTI.slice().sort((a, b) => b.length - a.length).find((n) => p.includes(norm(n)));
-      const tempo = TEMPI.find((t) => p.includes(norm(t))) || "";
+      const tempo = [...TEMPI, "entro 365 giorni", "tra 6 mesi"].find((t) => p.includes(norm(t))) || "";
       if (nome && !list.some((x) => x.nome === nome)) list.push({ nome, tempo });
       else if (!nome) extra.push(part);
     });
@@ -251,13 +251,14 @@ const Importer = (() => {
   }
   function preview() {
     const used = new Set();
-    let ok = 0, noPos = 0, noNum = 0, nFoto = 0;
+    let ok = 0, noPos = 0, noNum = 0, nFoto = 0, noInt = 0;
     const info = rows.map((r) => {
       const { d, pos } = rowData(r);
       const ph = matchPhotos(d, used); ph.forEach((f) => used.add(f)); nFoto += ph.length;
       const num = d.ngs || d.ncart || d.nprog;
       if (!num) noNum++; else ok++;
       if (!pos) noPos++;
+      if (/^(c\/d|d)$/i.test(String(d.cpc || "").replace(/\s+/g, "")) && !/aret/i.test(d.protocollo || "") && !parseInterventi(d.intProp).list.length) noInt++;
       return { d, pos, ph };
     });
     const opts = (sel) => FIELDS.map(([k, l]) => `<option value="${k}"${k === sel ? " selected" : ""}>${l}</option>`).join("");
@@ -273,6 +274,7 @@ const Importer = (() => {
       <div class="muted">${rows.length} righe${rows.length > 5 ? " (mostrate le prime 5)" : ""} · ${images.length ? nFoto + " foto abbinate su " + images.length : "nessuna foto"}</div>
       ${noNum ? `<div class="warn">${noNum === 1 ? "1 riga" : noNum + " righe"} senza numero (gs, cartellino o progressivo): ${noNum === 1 ? "verrà saltata" : "verranno saltate"}.</div>` : ""}
       ${noPos - shortLinks > 0 ? `<div class="warn">${noPos - shortLinks === 1 ? "1 riga" : noPos - shortLinks + " righe"} senza coordinate leggibili: non comparirà sulla mappa.</div>`.replace(noPos - shortLinks === 1 ? "@" : "comparirà", "compariranno") : ""}
+      ${noInt ? `<div class="warn">${noInt === 1 ? "1 pianta" : noInt + " piante"} con CPC C/D o D senza interventi proposti: andranno completati nella scheda.</div>` : ""}
       ${shortLinks ? `<div class="warn">${shortLinks} link brevi (maps.app.goo.gl) non leggibili: aprili e copia le coordinate.</div>` : ""}`;
     $("#impPreview").querySelectorAll("select").forEach((s) => s.addEventListener("change", () => { map[+s.dataset.i] = s.value; preview(); }));
     $("#btnImpGo").textContent = `Importa ${ok} ${ok === 1 ? "pianta" : "piante"}`;
@@ -304,6 +306,10 @@ const Importer = (() => {
         protocollo: prot, cpc: prot === "SIA" && cpcM ? cpcM[1] : "",
         operatore: S.name, iniziali: (S.init || "XX").toUpperCase(), appVersion: APP_VERSION, importato: srcName || "testo incollato",
       });
+      // ricontrollo visivo automatico per CPC A, B, C (come nella scheda)
+      if (rec.protocollo === "SIA" && RICONTROLLO[rec.cpc] && !rec.interventiProposti.some((x) => x.nome === "Ricontrollo visivo"))
+        rec.interventiProposti.push({ nome: "Ricontrollo visivo", tempo: RICONTROLLO[rec.cpc], auto: true });
+      rec.interventiProposti.sort((a, b) => INTERVENTI.indexOf(a.nome) - INTERVENTI.indexOf(b.nome));
       rec.posizione = pos && !pos.err ? { lat: pos.lat, lon: pos.lon, acc: null, importata: true } : null;
       btn.textContent = `Importo ${n + 1}…`;
       for (const f of ph) {
@@ -325,9 +331,8 @@ const Importer = (() => {
       await DB.put(rec); n++; projects.add(rec.lavoro);
     }
     btn.disabled = false;
-    toast(`${n} ${mode === "todo" ? "piante da fare" : "rilievi"} importati${skip ? ` · ${skip} righe saltate` : ""}`, 4000);
+    toast(`${n} ${mode === "todo" ? "piante da fare" : "rilievi"} importati${skip ? ` · ${skip} righe saltate` : ""}${mode === "todo" ? "" : " · tocca «Sincronizza ora» per inviarli"}`, 4500);
     refreshCounts(); MapView.plot();
-    if (mode !== "todo") Sync.run();
     const first = [...projects][0];
     if (projects.size === 1) openProject(first); else show("list");
   }
