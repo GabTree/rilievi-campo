@@ -9,7 +9,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="RilieviCampo">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="stylesheet" href="vendor/leaflet.css?v=0.5.4">
+<link rel="stylesheet" href="vendor/leaflet.css?v=0.5.5">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="icon" href="icons/icon-192.png">
 <title>Rilievi di Campo-GabTree</title>
@@ -121,6 +121,22 @@
   .req.ok { visibility: hidden; }
   .warnbox { border: 2px solid var(--rosso); }
   .warnbox code { font-size: 14px; overflow-wrap: anywhere; }
+  .helpbtn { width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid var(--verde); background: #fff; color: var(--verde); font-weight: 800; font-size: 13px; line-height: 18px; padding: 0; margin-left: 6px; vertical-align: middle; }
+  .helpbox { background: var(--chiaro); border-radius: 12px; padding: 10px 12px; font-size: 14px; margin: 4px 0 8px; }
+  .helpbox p { margin: 6px 0; } .helpbox code { overflow-wrap: anywhere; }
+  .viewer { position: fixed; inset: 0; z-index: 3000; background: #000; color: #fff; touch-action: none; }
+  .vtop { position: absolute; top: 0; left: 0; right: 0; z-index: 2; display: flex; align-items: center; gap: 10px;
+    padding: calc(8px + var(--safe-top)) 10px 8px; background: linear-gradient(rgba(0,0,0,.6), rgba(0,0,0,0)); }
+  .vtop #vCount { flex: 1; font-weight: 700; }
+  .vbtn { border: 0; border-radius: 12px; background: rgba(255,255,255,.18); color: #fff; font-size: 22px; font-weight: 700; min-width: 44px; height: 44px; padding: 0 12px; }
+  .vbtn.small { font-size: 14px; }
+  .vstage { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; touch-action: none; }
+  .vstage img { max-width: 100%; max-height: 100%; user-select: none; -webkit-user-select: none; transform-origin: center center; }
+  .vnav { position: absolute; top: 50%; transform: translateY(-50%); z-index: 2; border: 0; background: rgba(255,255,255,.15); color: #fff; font-size: 30px; width: 40px; height: 64px; border-radius: 10px; }
+  .vnav.prev { left: 6px; } .vnav.next { right: 6px; }
+  .vnote { position: absolute; bottom: calc(14px + var(--safe-bot)); left: 0; right: 0; text-align: center; font-size: 13px; opacity: .8; }
+  body.viewing { overflow: hidden; }
+  .thumbs img { cursor: zoom-in; }
   #btnSync.attn { background: var(--verde); color: #fff; }
   .item .selbox { width: 24px; height: 24px; flex: 0 0 auto; margin: 0 4px 0 0; pointer-events: none; }
   .item.sel { background: #e8f1ea; }
@@ -290,7 +306,8 @@
     <label class="f">Data della valutazione</label>
     <div class="daterow"><input type="date" id="fData"><button type="button" class="calbtn" id="btnCal" aria-label="Scegli dal calendario">📅</button></div>
     <label class="f">Progetto (cliente / località) <span class="req">*</span></label>
-    <input type="text" id="fLavoro" list="lavoriList" placeholder="es. Parco Rossi – Comune X" autocomplete="off">
+    <select id="fLavoroSel"></select>
+    <input type="text" id="fLavoro" class="hidden" placeholder="Nome del nuovo progetto, es. Parco Rossi – Comune X" autocomplete="off" style="margin-top:8px">
     <datalist id="lavoriList"></datalist>
   </div>
 
@@ -480,9 +497,15 @@
     <input type="text" id="sFolder" placeholder="Rilievi">
   </div>
   <div class="card">
-    <label class="f">Modello scheda ARETÉ</label>
+    <label class="f">Modello scheda ARETÉ <button type="button" class="helpbtn" id="btnAreteHelp" aria-label="Spiegazione">?</button></label>
+    <div id="areteHelp" class="helpbox hidden">
+      <p><b>Quale file:</b> <code>Scheda_ARETE_ORD_telefono.xlsx</code>, la versione senza macro della scheda ARETÉ. Puoi sceglierlo dal telefono, da OneDrive o da Google Drive.</p>
+      <p><b>Una volta sola, per ogni telefono:</b> il modello resta salvato nell'app finché non elimini l'icona o cancelli i dati dell'app. Ogni collega lo carica sul proprio telefono.</p>
+      <p><b>Perché non è già nell'app:</b> la scheda ARETÉ ha licenza CC BY-NC-ND (uso non commerciale, niente versioni modificate), quindi non viene pubblicata con l'app: ognuno usa la propria copia ricevuta da ARETÉ.</p>
+      <p><b>Come si usa:</b> nel nuovo rilievo scegli il protocollo «ARETÉ» e compila la scheda; l'app crea il file Excel ARETÉ insieme alla scheda Word.</p>
+    </div>
     <div id="areteTplInfo" class="muted">Nessun modello caricato</div>
-    <div class="muted">Carica il file <b>Scheda_ARETE_ORD_telefono.xlsx</b> (puoi sceglierlo da OneDrive o Google Drive). Si carica una volta sola.</div>
+    <div class="muted">Carica il file <b>Scheda_ARETE_ORD_telefono.xlsx</b>.</div>
     <input type="file" id="sAreteTpl" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style="margin-top:8px">
   </div>
   <div class="card">
@@ -495,6 +518,10 @@
     <label class="f">Iniziali (per il nome delle cartelle)</label><input type="text" id="sInit" maxlength="4" placeholder="es. VA">
   </div>
   <div class="card">
+    <label class="f" style="font-size:16px">Bussola</label>
+    <label class="f">Gradi sotto le foto</label>
+    <div class="seg" id="segGradi"><button data-v="1">Sì</button><button data-v="0">No</button></div>
+    <div class="muted">Mostra la direzione dello scatto (es. 160° S) sotto le miniature e nelle didascalie della scheda Word. Resta comunque salvata dentro la foto.</div>
     <label class="f">Declinazione magnetica (°, est positiva)</label>
     <input type="number" inputmode="decimal" step="0.1" id="sDecl">
     <div class="muted">Lazio/Italia centrale: circa +3,5° (2026). Si aggiunge al nord magnetico per ottenere quello geografico.</div>
@@ -504,6 +531,14 @@
   <div class="card"><label class="f">Diagnostica</label><div class="muted" id="verInfo"></div></div>
 </section>
 
+<div id="viewer" class="viewer hidden">
+  <div class="vtop"><button type="button" class="vbtn" id="vBack" aria-label="Indietro">←</button><span id="vCount"></span>
+    <button type="button" class="vbtn small hidden" id="vArrow">Con freccia N</button></div>
+  <div class="vstage" id="vStage"><img id="vImg" alt="" draggable="false"></div>
+  <button type="button" class="vnav prev" id="vPrev" aria-label="Precedente">‹</button>
+  <button type="button" class="vnav next" id="vNext" aria-label="Successiva">›</button>
+  <div class="vnote" id="vNote"></div>
+</div>
 <div id="selBar" class="selbar hidden">
   <div class="selrow"><span id="selCount"></span><button type="button" class="linkbtn" id="selAll">Tutti</button><button type="button" class="linkbtn" id="selCancel">Annulla</button></div>
   <div class="selrow">
@@ -521,17 +556,18 @@
 <div class="toast" id="toast"></div>
 <div id="errBanner" class="hidden"></div>
 
-<script src="config.js?v=0.5.4"></script>
-<script src="vendor/msal-browser.min.js?v=0.5.4"></script>
-<script src="vendor/piexif.js?v=0.5.4"></script>
-<script src="vendor/jszip.min.js?v=0.5.4"></script>
-<script src="vendor/docx.min.js?v=0.5.4"></script>
-<script src="vendor/qrcode.js?v=0.5.4"></script>
-<script src="vendor/leaflet.js?v=0.5.4"></script>
-<script src="arete.js?v=0.5.4"></script>
-<script src="output.js?v=0.5.4"></script>
-<script src="install.js?v=0.5.4"></script>
-<script src="app.js?v=0.5.4"></script>
-<script src="import.js?v=0.5.4"></script>
+<script src="config.js?v=0.5.5"></script>
+<script src="vendor/msal-browser.min.js?v=0.5.5"></script>
+<script src="vendor/piexif.js?v=0.5.5"></script>
+<script src="vendor/jszip.min.js?v=0.5.5"></script>
+<script src="vendor/docx.min.js?v=0.5.5"></script>
+<script src="vendor/qrcode.js?v=0.5.5"></script>
+<script src="vendor/leaflet.js?v=0.5.5"></script>
+<script src="arete.js?v=0.5.5"></script>
+<script src="output.js?v=0.5.5"></script>
+<script src="install.js?v=0.5.5"></script>
+<script src="viewer.js?v=0.5.5"></script>
+<script src="app.js?v=0.5.5"></script>
+<script src="import.js?v=0.5.5"></script>
 </body>
 </html>

@@ -120,7 +120,8 @@ const OUT = (() => {
     const data = itDate(r.dataValutazione);
     const fotoBlob = (f) => f.arrow || f.clean;
     const dirTxt = (f) => (f.heading !== null && f.heading !== undefined ? `direzione dello scatto ${Math.round(f.heading)}° ${cardinal(f.heading)}` : "");
-    const capTxt = (i, f, def) => [`Fig. ${i}`, def, dirTxt(f), itDate(r.dataValutazione)].filter(Boolean).join(" · ");
+    // didascalia: «Figura N», con la direzione dello scatto solo se attiva in Impostazioni → Bussola
+    const capTxt = (i, f) => [`Figura ${i}`, typeof S !== "undefined" && S.gradiFoto ? dirTxt(f) : ""].filter(Boolean).join(" · ");
     const nums = numeri(r).join(" · ") || "—";
     const isArete = r.protocollo === "ARETE";
     const protTxt = isArete ? "ARETÉ" : r.protocollo === "SIA" ? "SIA" : "";

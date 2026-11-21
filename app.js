@@ -3,7 +3,7 @@
  * salvataggio offline (IndexedDB) e sincronizzazione su OneDrive (Microsoft Graph). */
 "use strict";
 
-const APP_VERSION = "0.5.4";
+const APP_VERSION = "0.5.5";
 const CFG = window.APP_CONFIG || {};
 // errori imprevisti: mostrati in rosso in alto, per capire subito cosa non va
 function showErr(msg) {
@@ -64,7 +64,7 @@ const DB = {
 
 /* ---------------------------------------------------------- Settings */
 const S = { basemap: "osm", prjColors: {}, prjOff: [], folder: "Rilievi", name: "", init: "", north: "T", decl: 3.5, quality: 2048, arrow: true,
-  provider: "", msClientId: "", gClientId: "", setupDone: false, areteOn: false, protocollo: "SIA",
+  provider: "", msClientId: "", gClientId: "", setupDone: false, areteOn: false, protocollo: "SIA", gradiFoto: false,
   studio: "", qualifica: "", out: { schede: true, arete: true, foto: true, riepilogo: true, vettoriale: false } };
 async function loadSettings() {
   const v = await DB.getKV("settings");
@@ -186,6 +186,7 @@ function updateCompassUI(c) {
   $("#degBig").textContent = `${h}° ${cardinal(h)}`;
   $("#camHeading").textContent = `${h}° ${cardinal(h)}${st.bad ? " ⚠" : ""}`;
   $("#camArrow").innerHTML = arrowSvg(-c.heading);
+  $("#camArrow").classList.toggle("hidden", !S.arrow);
   MapView.heading(c.heading);
 }
 
@@ -565,7 +566,7 @@ let draft = null;
 function newDraft() {
   return { id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2),
     createdAt: Date.now(), dataValutazione: isoToday(), status: "pending", tipoValutazione: "Valutazione",
-    strumOn: false, esitoProva: "", foto: [], allegati: [] };
+    strumOn: false, esitoProva: "", foto: [], allegati: [], nomeV: 2 };  // nomeV 2 = nome senza «Valutazione» (dalla 0.5.5)
 }
 function isoToday() { const d = new Date(), p = (n) => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; }
 // vecchi rilievi: "Fitostatica" e "Strumentale" ora sono entrambi "Valutazione"
@@ -671,7 +672,7 @@ async function openForm(project) {
   ["fNgs", "fNcart", "fNprog", "fSpecie", "fDiam", "fAlt", "fProb", "fInt", "fCpc"].forEach((i) => ($("#" + i).value = ""));
   renderInterventi([]); updateIdReq();
   $("#fData").value = draft.dataValutazione;
-  $("#fLavoro").value = project || last.lavoro || "";
+  await fillLavoroSel(project || last.lavoro || "");
   $("#formWho").textContent = `Rilevatore: ${S.name} (${S.init})`;
   draft.tipoValutazione = "Valutazione";
   updateNamePreview();
@@ -731,6 +732,24 @@ async function setProtocollo(v, user) {
   if (user) applyRicontrollo(false);
 }
 
+// menu dei progetti nel nuovo rilievo: esistenti (più recenti in alto) oppure «+ Nuovo progetto…»
+async function fillLavoroSel(cur) {
+  const all = await DB.all(), last = {};
+  all.forEach((r) => { if (r.lavoro) last[r.lavoro] = Math.max(last[r.lavoro] || 0, r.createdAt || 0); });
+  ((await DB.getKV("projects")) || []).forEach((n) => { if (!(n in last)) last[n] = Date.now(); });
+  const names = Object.keys(last).sort((a, b) => last[b] - last[a]);
+  const sel = $("#fLavoroSel");
+  sel.innerHTML = `<option value="">— scegli il progetto —</option>` + names.map((n) => `<option>${esc(n)}</option>`).join("") + `<option value="__new">+ Nuovo progetto…</option>`;
+  if (cur && names.includes(cur)) { sel.value = cur; showNewLavoro(false, cur); }
+  else if (cur) { sel.value = "__new"; showNewLavoro(true, cur); }
+  else if (!names.length) { sel.value = "__new"; showNewLavoro(true, ""); }
+  else { sel.value = ""; showNewLavoro(false, ""); }
+}
+function showNewLavoro(on, val) {
+  const inp = $("#fLavoro");
+  inp.classList.toggle("hidden", !on);
+  inp.value = val || "";
+}
 async function fillLavori() {
   const all = await DB.all();
   const names = [...new Set([...all.map((r) => r.lavoro), ...((await DB.getKV("projects")) || [])].filter(Boolean))];
@@ -745,10 +764,11 @@ function renderThumbs() {
     const d = document.createElement("div");
     d.className = "th";
     const url = URL.createObjectURL(p.thumb);
-    d.innerHTML = `<img src="${url}"><button class="del" data-i="${i}">×</button>
-      <div class="cap">${p.heading !== null ? Math.round(p.heading) + "° " + cardinal(p.heading) : "senza bussola"}${p.compassBad ? " ⚠" : ""}</div>`;
+    d.innerHTML = `<img src="${url}" data-i="${i}"><button class="del" data-i="${i}">×</button>
+      ${S.gradiFoto ? `<div class="cap">${p.heading !== null && p.heading !== undefined ? Math.round(p.heading) + "° " + cardinal(p.heading) : "senza bussola"}${p.compassBad ? " ⚠" : ""}</div>` : ""}`;
     box.appendChild(d);
   });
+  box.querySelectorAll("img").forEach((im) => im.addEventListener("click", () => Viewer.open(draft.foto, Number(im.dataset.i))));
   box.querySelectorAll(".del").forEach((b) => b.addEventListener("click", () => { draft.foto.splice(Number(b.dataset.i), 1); renderThumbs(); }));
   $("#camCount").textContent = `${draft.foto.length} foto`;
 }
@@ -770,7 +790,10 @@ function compatto(s) {
 function ymd(t) { const d = new Date(t), p = (n) => String(n).padStart(2, "0"); return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}`; }
 // YYYYMMDD_Tipo_numeri_progetto_XX   es. 20261120_Valutazione_gs.4521-cart.118_ParcoRossi-ComuneX_VA
 function nomeRilievo(r) {
-  return [(r.dataValutazione || "").replace(/-/g, "") || ymd(r.createdAt), TIPO_NOME[r.tipoValutazione] || "Rilievo", numeri(r).join("-") || "sn", compatto(r.lavoro), (r.iniziali || "XX")].join("_");
+  const data = (r.dataValutazione || "").replace(/-/g, "") || ymd(r.createdAt);
+  // dalla 0.5.5 i rilievi nuovi non hanno più il tipo nel nome; quelli vecchi lo tengono (così non cambiano nome se modificati)
+  const tipo = r.nomeV >= 2 ? [] : [TIPO_NOME[r.tipoValutazione] || "Rilievo"];
+  return [data, ...tipo, numeri(r).join("-") || "sn", compatto(r.lavoro), (r.iniziali || "XX")].join("_");
 }
 function updateNamePreview() {
   if (!draft) return;
@@ -859,7 +882,8 @@ async function projectFolder(name) {
   if (map[name]) return map[name];
   const list = (await DB.all()).filter((r) => r.lavoro === name).sort((a, b) => (a.dataValutazione || "").localeCompare(b.dataValutazione || "") || a.createdAt - b.createdAt);
   const first = list[0] || {};
-  map[name] = [(first.dataValutazione || isoToday()).replace(/-/g, ""), compatto(name), TIPO_NOME[first.tipoValutazione] || "Valutazione"].join("_");
+  // cartelle nuove (dalla 0.5.5): data_Progetto, senza «_Valutazione»; quelle già create restano come sono
+  map[name] = [(first.dataValutazione || isoToday()).replace(/-/g, ""), compatto(name)].join("_");
   await DB.setKV("projFolders", map);
   return map[name];
 }
@@ -1507,8 +1531,9 @@ async function openDetail(id) {
     ["Indagine strumentale", r.strumOn ? `${r.strumento || "sì"}${r.esitoProva ? " · esito " + r.esitoProva.toLowerCase() : ""}` : ""],
     ["Stato", (STATO[r.status] || [r.status])[0] + (r.error ? " – " + r.error : "")]];
   $("#detKv").innerHTML = kv.filter((x) => x[1]).map(([k, v]) => `<div>${k}</div><div>${esc(v)}</div>`).join("");
-  $("#detThumbs").innerHTML = r.foto.map((f) => `<div class="th"><img src="${URL.createObjectURL(f.arrow || f.clean)}">
-    <div class="cap">${f.heading !== null ? Math.round(f.heading) + "° " + cardinal(f.heading) : ""}</div></div>`).join("");
+  $("#detThumbs").innerHTML = r.foto.map((f, i) => `<div class="th"><img src="${URL.createObjectURL(f.thumb || f.arrow || f.clean)}" data-i="${i}">
+    ${S.gradiFoto && f.heading !== null && f.heading !== undefined ? `<div class="cap">${Math.round(f.heading)}° ${cardinal(f.heading)}</div>` : ""}</div>`).join("");
+  $("#detThumbs").querySelectorAll("img").forEach((im) => im.addEventListener("click", () => Viewer.open(r.foto, Number(im.dataset.i))));
   show("detail");
   detMap.ensure(); detMap.refresh();
   if (p.lat) setTimeout(() => detMap.set(p.lat, p.lon, true), 150);
@@ -1560,7 +1585,7 @@ function show(id) {
 }
 async function renderSettings() {
   $("#sFolder").value = S.folder; $("#sName").value = S.name; $("#sInit").value = S.init; $("#sDecl").value = S.decl;
-  setSeg("segQuality", S.quality); setSeg("segProv", S.provider);
+  setSeg("segQuality", S.quality); setSeg("segProv", S.provider); setSeg("segGradi", S.gradiFoto ? "1" : "0");
   $("#sStudio").value = S.studio || ""; $("#sQual").value = S.qualifica || "";
   renderOutChecks($("#setOut"), S.out, (k, v) => { S.out[k] = v; saveSettings(); });
   const A = providerAuth();
@@ -1606,6 +1631,7 @@ async function main() {
   if (gBack) S.provider = "google";
   drawRose();
   $("#camArrow").innerHTML = arrowSvg(0);
+  $("#camArrow").classList.toggle("hidden", !S.arrow);
   Compass.onChange(updateCompassUI);
   setNet();
   window.addEventListener("online", setNet);
@@ -1632,6 +1658,14 @@ async function main() {
     draft = null; GPS.fixed = null;
     back ? openDetail(back) : show("home");
   });
+  $("#fLavoroSel").addEventListener("change", (e) => {
+    const v = e.target.value;
+    if (v === "__new") { showNewLavoro(true, ""); $("#fLavoro").focus(); } else showNewLavoro(false, v);
+    updateNamePreview(); checkDuplicate();
+  });
+  $("#btnAreteHelp").addEventListener("click", (e) => { e.preventDefault(); $("#areteHelp").classList.toggle("hidden"); });
+  bindSeg("segGradi", (v) => { S.gradiFoto = v === "1"; saveSettings(); setSeg("segGradi", v); });
+  Viewer.bind();
   $("#intAdd").addEventListener("change", (e) => { addIntervento(e.target.value); e.target.value = ""; });
   $("#fCpc").addEventListener("change", () => applyRicontrollo(true));
   $("#btnCal").addEventListener("click", () => { const d = $("#fData"); try { d.showPicker(); } catch (e) { d.focus(); d.click(); } });
@@ -1695,6 +1729,7 @@ async function main() {
   });
   $("#btnArrow").addEventListener("click", () => {
     S.arrow = !S.arrow; saveSettings();
+    $("#camArrow").classList.toggle("hidden", !S.arrow);
     $("#btnArrow").textContent = "Freccia N: " + (S.arrow ? "sì" : "no");
     $("#btnArrow").classList.toggle("on", S.arrow);
   });
