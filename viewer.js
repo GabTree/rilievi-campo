@@ -19,7 +19,7 @@ const Viewer = (() => {
     if (url) URL.revokeObjectURL(url);
     url = URL.createObjectURL(blobOf(f));
     img().src = url;
-    document.getElementById("vCount").textContent = `${i + 1} / ${list.length}`;
+    document.getElementById("vCount").textContent = `${i + 1} / ${list.length}${f.etichetta ? " · " + f.etichetta : ""}`;
     const both = !!(f.arrow && f.clean);
     const b = document.getElementById("vArrow");
     b.classList.toggle("hidden", !both);

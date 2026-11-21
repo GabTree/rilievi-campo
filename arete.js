@@ -319,8 +319,9 @@ const ARETE = (() => {
     } else {
       ["C51", "B52", "N51", "M52", "E54", "E55", "E56", "E57"].forEach((c) => S(c, ""));
     }
-    const note = [r.problematiche && "Note di campo: " + r.problematiche,
-      r.interventi && "Interventi e nuova CPC: " + r.interventi].filter(Boolean).join(" · ");
+    const ip = typeof intTxt === "function" ? intTxt(r) : "";
+    const note = [r.problematiche && "Note di campo: " + r.problematiche, ip && "Interventi proposti: " + ip,
+      r.interventi && "Note sugli interventi: " + r.interventi].filter(Boolean).join(" · ");
     S("C59", note, "s");
 
     zip.file(path, new XMLSerializer().serializeToString(doc));
@@ -329,6 +330,10 @@ const ARETE = (() => {
     if (/<calcPr[^>]*fullCalcOnLoad/.test(wbx)) { /* già presente */ }
     else if (/<calcPr/.test(wbx)) wbx = wbx.replace(/<calcPr/, '<calcPr fullCalcOnLoad="1"');
     else wbx = wbx.replace("</workbook>", '<calcPr fullCalcOnLoad="1"/></workbook>');
+    // il foglio originale contiene un nome con una vecchia macro Excel 4.0 (xlm="1"): lo tolgo,
+    // altrimenti Excel avvisa «file senza macro ma con contenuto da macro»
+    wbx = wbx.replace(/<definedName\b[^>]*\bxlm="1"[^>]*\/>/g, "").replace(/<definedName\b[^>]*\bxlm="1"[^>]*>[\s\S]*?<\/definedName>/g, "")
+      .replace(/<definedNames>\s*<\/definedNames>/g, "");
     zip.file("xl/workbook.xml", wbx);
     if (zip.file("xl/calcChain.xml")) zip.remove("xl/calcChain.xml");
     return zip.generateAsync({ type: "blob", compression: "DEFLATE",
