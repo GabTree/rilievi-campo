@@ -363,5 +363,100 @@ ${pm}
 </qgis>`], { type: "text/xml" });
   }
 
-  return { schedaDocx, xlsx, csv, geojson, kml, qml, staticMap };
+
+  /* ------------------------------------------------------ tabella per albx_ricoltura (programma dei ricontrolli) */
+  // Formato letto da albx (gabtree.py): primo foglio, riga 1 = intestazioni, una riga per pianta.
+  // Obbligatorie: Località, Numero (intero o Gr.N), Data rilievo (gg/mm/aaaa, non futura). Una sola riga sbagliata
+  // fa rifiutare tutta la tabella: le piante non valide vengono escluse qui e segnalate.
+  const ALBX_COLS = ["Località", "Numero", "Data rilievo", "Specie", "Frequenza", "Interventi", "Note", "Priorità", "Latitudine", "Longitudine", "Relazione"];
+  // «Abies alba L. - abete bianco» -> «Abies alba»; «Platanus × acerifolia (Aiton) Willd.» -> «Platanus × acerifolia»
+  function albxSpecie(s) {
+    const t = String(s || "").split(/\s+[-–—]\s+/)[0].replace(/\(.*$/, "").trim().split(/\s+/);
+    if (!t[0]) return "";
+    const out = [t[0][0].toUpperCase() + t[0].slice(1).toLowerCase()];
+    for (let i = 1; i < t.length; i++) {
+      const w = t[i];
+      if (/^(x|×)$/i.test(w)) { out.push("×"); continue; }
+      if (/^(subsp|ssp|var|f)\.$/i.test(w) && t[i + 1] && /^[a-zà-ü-]+$/.test(t[i + 1])) { out.push(w.toLowerCase(), t[++i]); continue; }
+      if (/^[a-zà-ü-]+$/.test(w) && out.length < 4) { out.push(w); continue; }
+      break;                         // autore (L., Mill., Spach…), cultivar o altro testo
+    }
+    if (out[out.length - 1] === "×") out.pop();
+    return out.join(" ");
+  }
+  // numero per albx: il primo valido tra progressivo, cartellino e GreenSpaces
+  function albxNumero(r) {
+    for (const v of [r.nprog, r.ncart, r.ngs]) {
+      const t = String(v || "").trim();
+      if (/^\d+$/.test(t)) return Number(t);
+      const g = t.match(/^gr\.?\s*(\d+)$/i);
+      if (g) return "Gr." + Number(g[1]);
+    }
+    return null;
+  }
+  // anni tra i ricontrolli: X con abbattimento, altrimenti dal «Ricontrollo visivo» (sotto l'anno -> 1), altrimenti vuota
+  function albxFrequenza(r) {
+    const iv = r.interventiProposti || [];
+    if (iv.some((x) => /^abbattimento/i.test(x.nome))) return "X";
+    const anni = iv.filter((x) => /^ricontrollo visivo/i.test(x.nome)).map((x) => {
+      const m = String(x.tempo || "").match(/tra\s+(\d+)\s+ann/i);
+      return m ? Number(m[1]) : x.tempo ? 1 : null;
+    }).filter((n) => n);
+    return anni.length ? Math.max(1, Math.min(...anni)) : "";
+  }
+  function albxRighe(list, localita) {
+    const avvisi = [], perChiave = new Map();
+    const sito = String(localita || "").replace(/\s+/g, " ").trim();
+    const oggi = new Date().toISOString().slice(0, 10);
+    for (const r of list) {
+      const nome = r.cartella || "rilievo senza nome";
+      const num = albxNumero(r);
+      if (num === null) { avvisi.push(`${nome}: manca un numero valido (intero, oppure Gr.1 per un gruppo)`); continue; }
+      if (!r.dataValutazione || r.dataValutazione > oggi) { avvisi.push(`${nome}: data del rilievo mancante o futura`); continue; }
+      const gruppo = typeof num === "string";
+      const specie = albxSpecie(r.specie) || (gruppo ? "gruppo" : "");
+      const p = r.posizione || {};
+      const ll = p.lat && p.lon ? [Number(p.lat.toFixed(6)), Number(p.lon.toFixed(6))] : ["", ""];
+      const interventi = (r.interventiProposti || []).filter((x) => !/^ricontrollo visivo/i.test(x.nome))
+        .map((x) => x.nome + (x.tempo ? ", " + x.tempo : "")).join("; ");
+      let note = String(r.problematiche || "").replace(/\s+/g, " ").trim();
+      if (note.length > 300) note = note.slice(0, 297).replace(/\s+\S*$/, "") + "…";
+      const riga = [sito, num, itDate(r.dataValutazione), specie, albxFrequenza(r), interventi, note, "", ll[0], ll[1], ""];
+      const k = String(num).toLowerCase(), prima = perChiave.get(k);
+      if (prima) {
+        const tieni = (r.dataValutazione || "") >= (prima.r.dataValutazione || "") ? { r, riga } : prima;
+        avvisi.push(`numero ${num} presente due volte: tengo il rilievo del ${itDate(tieni.r.dataValutazione)}`);
+        perChiave.set(k, tieni);
+      } else perChiave.set(k, { r, riga });
+      if (!specie) avvisi.push(`${nome}: specie mancante (albx la chiede per le piante nuove)`);
+    }
+    const righe = [...perChiave.values()].map((x) => x.riga)
+      .sort((a, b) => (typeof a[1] === "string") - (typeof b[1] === "string") || String(a[1]).localeCompare(String(b[1]), "it", { numeric: true }));
+    return { righe, avvisi };
+  }
+  // Excel semplice: un foglio, niente celle unite, niente righe di titolo
+  async function albxXlsx(list, localita) {
+    const { righe, avvisi } = albxRighe(list, localita);
+    const colL = (i) => String.fromCharCode(65 + i);
+    const cellX = (ref, v, st) => {
+      if (v === "" || v === null || v === undefined) return "";
+      if (typeof v === "number") return `<c r="${ref}"${st ? ` s="${st}"` : ""}><v>${v}</v></c>`;
+      return `<c r="${ref}"${st ? ` s="${st}"` : ""} t="inlineStr"><is><t xml:space="preserve">${esc(v)}</t></is></c>`;
+    };
+    const rows = [ALBX_COLS, ...righe].map((row, k) => `<row r="${k + 1}">${row.map((v, i) => cellX(colL(i) + (k + 1), v, k === 0 ? 1 : 0)).join("")}</row>`);
+    const W = [28, 8, 12, 24, 10, 50, 50, 9, 11, 11, 30];
+    const sheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cols>${W.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join("")}</cols><sheetData>${rows.join("")}</sheetData></worksheet>`;
+    const styles = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
+    const z = new JSZip();
+    z.file("[Content_Types].xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>`);
+    z.file("_rels/.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`);
+    z.file("xl/workbook.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Rilievi" sheetId="1" r:id="rId1"/></sheets></workbook>`);
+    z.file("xl/_rels/workbook.xml.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`);
+    z.file("xl/worksheets/sheet1.xml", sheet);
+    z.file("xl/styles.xml", styles);
+    const blob = await z.generateAsync({ type: "blob", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    return { blob, n: righe.length, avvisi };
+  }
+
+  return { schedaDocx, xlsx, csv, geojson, kml, qml, staticMap, albxXlsx, albxRighe, albxSpecie };
 })();

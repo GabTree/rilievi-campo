@@ -3,7 +3,7 @@
  * salvataggio offline (IndexedDB) e sincronizzazione su OneDrive (Microsoft Graph). */
 "use strict";
 
-const APP_VERSION = "0.5.7";
+const APP_VERSION = "0.5.8";
 const CFG = window.APP_CONFIG || {};
 // errori imprevisti: mostrati in rosso in alto, per capire subito cosa non va
 function showErr(msg) {
@@ -65,7 +65,7 @@ const DB = {
 /* ---------------------------------------------------------- Settings */
 const S = { basemap: "osm", prjColors: {}, prjOff: [], folder: "Rilievi", name: "", init: "", north: "T", decl: 3.5, quality: 2048, arrow: true,
   provider: "", msClientId: "", gClientId: "", setupDone: false, areteOn: false, protocollo: "SIA", gradiFoto: false, etichette: true, clino: true, mapColor: "prj", mapFilter: "",
-  studio: "", qualifica: "", out: { schede: true, arete: true, foto: true, riepilogo: true, vettoriale: false } };
+  studio: "", qualifica: "", out: { schede: true, arete: true, foto: true, riepilogo: true, vettoriale: false, albx: false } };
 async function loadSettings() {
   const v = await DB.getKV("settings");
   if (v) Object.assign(S, v);
@@ -960,10 +960,17 @@ async function projectFiles(name, o) {
     out.push({ path: `Mappa/${c}.qml`, blob: OUT.qml() });
     out.push({ path: `Mappa/${c}.kml`, blob: OUT.kml(list, name) });
   }
+  if (o.albx && list.length) {
+    // tabella per albx_ricoltura: Località = nome del progetto; il file viene sovrascritto a ogni invio
+    const t = await OUT.albxXlsx(list, name);
+    if (t.n) out.push({ path: `albx_${c}.xlsx`, blob: t.blob });
+    if (t.avvisi.length) albxAvvisi.push(`«${name}»: ` + t.avvisi.join("; "));
+  }
   return out;
 }
+let albxAvvisi = [];   // piante escluse dalla tabella per albx (mostrate dopo la sincronizzazione)
 const OUT_LABELS = [["schede", "Schede di valutazione"], ["arete", "Schede ARETÉ"], ["foto", "Foto"],
-  ["riepilogo", "Tabella riassuntiva"], ["vettoriale", "File per QGIS e Google Earth"]];
+  ["riepilogo", "Tabella riassuntiva"], ["vettoriale", "File per QGIS e Google Earth"], ["albx", "Tabella per albx"]];
 function renderOutChecks(box, o, onChange) {
   if (o.arete === undefined) o.arete = true;
   box.innerHTML = OUT_LABELS.map(([k, t]) => `<label><input type="checkbox" data-o="${k}" ${o[k] ? "checked" : ""}><span>${t}</span></label>`).join("");
@@ -1265,6 +1272,7 @@ const Sync = {
     }
     stale.forEach((n) => touched.add(n));
     const sigs = (await DB.getKV("projSig")) || {};
+    albxAvvisi = [];
     for (const name of touched) {
       try {
         setSyncInfo(`Aggiorno i file del progetto ${name}…`);
@@ -1282,6 +1290,7 @@ const Sync = {
     if (lastErr) setSyncInfo(`${ok ? ok + (ok === 1 ? " rilievo inviato" : " rilievi inviati") + ", " : ""}${left ? left + " da reinviare · " : ""}Errore: ${lastErr}`);
     else if (!ok && filesOk) setSyncInfo(`Tabella e vettoriale aggiornati su ${P.name} alle ${ora}`);
     else setSyncInfo(`Sincronizzato su ${P.name} alle ${ora}`);
+    if (albxAvvisi.length) setSyncInfo($("#syncInfo").textContent + "\n\nTabella per albx, piante escluse o da controllare: " + albxAvvisi.join(" · "));
     refreshCounts();
   },
   // "Crea / aggiorna i file scelti" dalla pagina del progetto: rifà tutto il progetto con le spunte scelte
@@ -1304,10 +1313,11 @@ const Sync = {
         if (r.status !== "synced") { r.status = "synced"; r.syncedAt = Date.now(); r.error = null; await DB.put(r); }
       }
       info("File del progetto…");
+      albxAvvisi = [];
       for (const f of await projectFiles(name, o)) await P.upload(`${base}/${f.path}`, f.blob, true);
       if (P === Local) await Local.finish();
-      if (o.riepilogo === !!S.out.riepilogo && o.vettoriale === !!S.out.vettoriale) { const sg = (await DB.getKV("projSig")) || {}; sg[name] = await projSig(name); await DB.setKV("projSig", sg); }
-      info(`Fatto: ${base}`);
+      if (o.riepilogo === !!S.out.riepilogo && o.vettoriale === !!S.out.vettoriale && !!o.albx === !!S.out.albx) { const sg = (await DB.getKV("projSig")) || {}; sg[name] = await projSig(name); await DB.setKV("projSig", sg); }
+      info(`Fatto: ${base}` + (albxAvvisi.length ? `\nTabella per albx, piante escluse o da controllare: ${albxAvvisi.join(" · ")}` : ""));
       toast("File del progetto aggiornati");
     } catch (e) { info("Errore: " + errIt(e)); }
     this.running = false;
@@ -1317,10 +1327,10 @@ const Sync = {
 // "firma" dei file di progetto: cambia se cambiano le spunte, il numero di piante o un invio
 async function projSig(name) {
   const list = (await DB.all()).filter((r) => r.lavoro === name && !isTodo(r));
-  return JSON.stringify([!!S.out.riepilogo, !!S.out.vettoriale, list.length, Math.max(0, ...list.map((r) => r.syncedAt || 0))]);
+  return JSON.stringify([!!S.out.riepilogo, !!S.out.vettoriale, !!S.out.albx, list.length, Math.max(0, ...list.map((r) => r.syncedAt || 0))]);
 }
 async function staleProjects() {
-  if (!S.out.riepilogo && !S.out.vettoriale) return [];
+  if (!S.out.riepilogo && !S.out.vettoriale && !S.out.albx) return [];
   const sigs = (await DB.getKV("projSig")) || {}, all = await DB.all(), out = [];
   for (const name of new Set(all.filter((r) => !isTodo(r) && r.status === "synced" && r.lavoro).map((r) => r.lavoro)))
     if (sigs[name] !== (await projSig(name))) out.push(name);
