@@ -9,7 +9,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="RilieviCampo">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="stylesheet" href="vendor/leaflet.css?v=0.5.9b">
+<link rel="stylesheet" href="vendor/leaflet.css?v=0.6.0">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="icon" href="icons/icon-192.png">
 <title>Rilievi di Campo-GabTree</title>
@@ -139,6 +139,9 @@
   .thumbs img { cursor: zoom-in; }
   .scanbtn { margin-left: 6px; border: 1px solid var(--verde); background: #fff; color: var(--verde); border-radius: 10px; font-size: 12px; font-weight: 700; padding: 2px 8px; vertical-align: middle; }
   .copybtn { width: 100%; border: 1px dashed var(--verde); background: var(--chiaro); color: var(--verde); border-radius: 12px; padding: 10px; font-weight: 700; font-size: 15px; margin-bottom: 4px; }
+  #btnFormBack.armed { background: var(--rosso); color: #fff; }
+  .postchk { display: flex; align-items: center; gap: 10px; margin: 14px 0 6px; padding: 12px; border: 2px solid var(--verde); border-radius: 12px; font-weight: 700; color: var(--verde); }
+  .postchk input { width: 22px; height: 22px; }
   .lico { width: 22px; height: 22px; flex: 0 0 22px; display: inline-block; }
   .pw { position: relative; }
   .lbadge { position: absolute; bottom: 5px; right: 5px; width: 30px; height: 30px; border-radius: 50%; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.35); display: flex; align-items: center; justify-content: center; pointer-events: none; }
@@ -547,7 +550,7 @@
       <p><b>Quale file:</b> <code>Scheda_ARETE_ORD_telefono.xlsx</code>, la versione senza macro della scheda ARETÉ. Puoi sceglierlo dal telefono, da OneDrive o da Google Drive.</p>
       <p><b>Una volta sola, per ogni telefono:</b> il modello resta salvato nell'app finché non elimini l'icona o cancelli i dati dell'app. Ogni collega lo carica sul proprio telefono.</p>
       <p><b>Perché non è già nell'app:</b> la scheda ARETÉ ha licenza CC BY-NC-ND (uso non commerciale, niente versioni modificate), quindi non viene pubblicata con l'app: ognuno usa la propria copia ricevuta da ARETÉ.</p>
-      <p><b>Come si usa:</b> nel nuovo rilievo scegli il protocollo «ARETÉ» e compila la scheda; l'app crea il file Excel ARETÉ insieme alla scheda Word.</p>
+      <p><b>Come si usa:</b> nel nuovo rilievo scegli il protocollo «ARETÉ» e compila le voci. Con la spunta «Foglio per scheda ARETÉ», all'invio l'app crea per ogni rilievo un Excel semplice con tutti i dati (Sezione, Voce, Valore) nella cartella «Fogli ARETE», da usare per compilare la scheda ufficiale. La classe di rischio la calcola la scheda ufficiale.</p>
     </div>
     <div id="areteTplInfo" class="muted">Nessun modello caricato</div>
     <div class="muted">Carica il file <b>Scheda_ARETE_ORD_telefono.xlsx</b>.</div>
@@ -637,19 +640,19 @@
 <div class="toast" id="toast"></div>
 <div id="errBanner" class="hidden"></div>
 
-<script src="config.js?v=0.5.9b"></script>
-<script src="vendor/msal-browser.min.js?v=0.5.9b"></script>
-<script src="vendor/piexif.js?v=0.5.9b"></script>
-<script src="vendor/jszip.min.js?v=0.5.9b"></script>
-<script src="vendor/docx.min.js?v=0.5.9b"></script>
-<script src="vendor/qrcode.js?v=0.5.9b"></script>
-<script src="vendor/leaflet.js?v=0.5.9b"></script>
-<script src="arete.js?v=0.5.9b"></script>
-<script src="output.js?v=0.5.9b"></script>
-<script src="install.js?v=0.5.9b"></script>
-<script src="viewer.js?v=0.5.9b"></script>
-<script src="tools.js?v=0.5.9b"></script>
-<script src="app.js?v=0.5.9b"></script>
-<script src="import.js?v=0.5.9b"></script>
+<script src="config.js?v=0.6.0"></script>
+<script src="vendor/msal-browser.min.js?v=0.6.0"></script>
+<script src="vendor/piexif.js?v=0.6.0"></script>
+<script src="vendor/jszip.min.js?v=0.6.0"></script>
+<script src="vendor/docx.min.js?v=0.6.0"></script>
+<script src="vendor/qrcode.js?v=0.6.0"></script>
+<script src="vendor/leaflet.js?v=0.6.0"></script>
+<script src="arete.js?v=0.6.0"></script>
+<script src="output.js?v=0.6.0"></script>
+<script src="install.js?v=0.6.0"></script>
+<script src="viewer.js?v=0.6.0"></script>
+<script src="tools.js?v=0.6.0"></script>
+<script src="app.js?v=0.6.0"></script>
+<script src="import.js?v=0.6.0"></script>
 </body>
 </html>

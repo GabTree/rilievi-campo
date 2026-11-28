@@ -1,5 +1,5 @@
 // Service worker: conserva l'app sul telefono per l'uso offline.
-const CACHE = "rilievi-v0.5.9b";
+const CACHE = "rilievi-v0.6.0";
 const TILES = "rilievi-tiles";
 let trimming = false;
 async function trimTiles(c) {   // tiene al massimo ~1500 riquadri (circa 30 MB)

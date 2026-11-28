@@ -133,12 +133,16 @@ const ARETE = (() => {
       <details><summary>Bersaglio e impulso – pre intervento</summary>${bersHtml("pre")}
         <div class="muted" style="margin-top:6px">Per pedoni e traffico le fasce esatte dipendono dalle dimensioni: si sceglie la classe, il testo lo calcola la scheda.</div></details>
       <details><summary>Prescrizioni</summary><div id="prescBox"></div><button type="button" class="iconbtn" id="addPresc">+ prescrizione</button></details>
-      <details><summary>Post intervento (facoltativo)</summary>
-        <label class="f"><input type="checkbox" data-a="post_on"> Compila la valutazione post intervento</label>
+      <label class="postchk"><input type="checkbox" data-a="post_on"> Valutazione post intervento</label>
+      <div id="postBox" class="hidden"><details open><summary>Post intervento</summary>
         <div class="muted">Lascia vuote le dimensioni che non cambiano.</div>
         ${POSTDIM.map((f) => numField("pd_" + f.k, f.label, "come pre")).join("")}
         ${bersHtml("post")}
-        ${PER.map((p, i) => selectField("PP" + i, p + " – P post", "pericolo_post")).join("")}</details>`;
+        ${PER.map((p, i) => selectField("PP" + i, p + " – P post", "pericolo_post")).join("")}</details></div>`;
+    // la parte post intervento compare solo con la spunta
+    const postChk = box.querySelector('[data-a="post_on"]');
+    box._updPost = () => box.querySelector("#postBox").classList.toggle("hidden", !postChk.checked);
+    postChk.addEventListener("change", box._updPost);
     // frequenze dipendenti dal tipo
     box.querySelectorAll("select[data-freq]").forEach((s) => {
       const tipoSel = box.querySelector(`[data-a="${s.dataset.tipo}"]`);
@@ -166,6 +170,7 @@ const ARETE = (() => {
     box.querySelectorAll(".zone").forEach((z) => (z.innerHTML = ""));
     box._resetPresc();
     if (remembered.ubicaz) box.querySelector('[data-a="ubicaz"]').value = remembered.ubicaz;
+    box._updPost();
     box.querySelectorAll("select[data-freq]").forEach((s) => s.dispatchEvent(new Event("refresh")));
     box.querySelectorAll('select[data-a$="_tA"], select[data-a$="_tR"]').forEach((s) => s.dispatchEvent(new Event("change")));
   }
@@ -191,6 +196,7 @@ const ARETE = (() => {
     box.querySelectorAll("[data-a]").forEach((e) => {
       a[e.dataset.a] = e.type === "checkbox" ? e.checked : e.value.trim();
     });
+    if (!a.post_on) Object.keys(a).forEach((k) => { if (/^(pd_|post_|PP\d)/.test(k)) delete a[k]; });
     a.difetti = {};
     box.querySelectorAll(".zone").forEach((z) => {
       a.difetti[z.dataset.zone] = Array.from(z.querySelectorAll(".defrow"))
@@ -340,9 +346,79 @@ const ARETE = (() => {
       mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
   }
 
+
+  /* ---------------------------------------- Foglio dati ARETÉ: Sezione | Voce | Valore (solo voci compilate) */
+  // file semplice da leggere anche dal telefono; i dati servono per compilare la scheda ufficiale
+  function dataRows(r) {
+    const a = r.arete || {}, rows = [], add = (sez, voce, val) => { if (val !== "" && val !== null && val !== undefined && val !== false) rows.push([sez, voce, val]); };
+    const data = r.dataValutazione ? r.dataValutazione.split("-").reverse().join("/") : "";
+    const num = (v) => { const n = Number(String(v).replace(",", ".")); return v === "" || isNaN(n) ? v : n; };
+    const freq = (tipo, which, v) => {
+      if (!v) return "";
+      const t = ((L && L.frequenze[tipo]) || {})[which] || [];
+      return `classe ${v}` + (t[v - 1] ? " · " + t[v - 1] : "");
+    };
+    add("Rilievo", "Nome", r.cartella); add("Rilievo", "Progetto", r.lavoro); add("Rilievo", "Data", data);
+    add("Rilievo", "Rilevatore", r.operatore);
+    add("Rilievo", "Numeri", [r.ngs && "gs. " + r.ngs, r.ncart && "cart. " + r.ncart, r.nprog && "rel. " + r.nprog].filter(Boolean).join("  "));
+    const p = r.posizione || {};
+    if (p.lat) add("Rilievo", "Posizione", `${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}`);
+    add("Rilievo", "Specie", r.specie);
+    GEN.forEach((f) => add("Dati generali", f.label, a[f.k]));
+    add("Dimensioni", "H – altezza (m)", num(r.altezza || "")); add("Dimensioni", "D tr – diametro a 120 cm (cm)", num(r.diametro120 || ""));
+    DIM.forEach((f) => add("Dimensioni", f.label, num(a[f.k] || "")));
+    DIAG.forEach((f) => add("Diagnosi", f.label, a[f.k]));
+    ZONES.forEach((z) => ((a.difetti && a.difetti[z.k]) || []).forEach((d) => add("Difetti – " + z.label, d.d || "(difetto)", d.g ? "gravità: " + d.g : "")));
+    const per = (key, sez) => PER.forEach((nm, i) => add(sez, nm, num(a[key + i] || "")));
+    per("P", "Pericolo – pre intervento");
+    const bers = (tag, sez) => {
+      const b = BERS[tag];
+      add(sez, "Bersaglio albero", a[`${tag}_tA`]); add(sez, "Frequenza albero", freq(a[`${tag}_tA`], b.la, Number(a[`${tag}_fA`]) || 0));
+      if (tag === "pre") add(sez, "Moltiplicatore", num(a.pre_m || ""));
+      add(sez, "Bersaglio rami", a[`${tag}_tR`]); add(sez, "Frequenza rami", freq(a[`${tag}_tR`], b.lr, Number(a[`${tag}_fR`]) || 0));
+    };
+    bers("pre", "Bersaglio – pre intervento");
+    for (let i = 0; i < 4; i++) {
+      const t = PRESC.map((q) => a[`pr${i}_${q.k}`] ? `${q.label}: ${a[`pr${i}_${q.k}`]}` : "").filter(Boolean).join(" · ");
+      add("Prescrizioni", `Prescrizione ${i + 1}`, t);
+    }
+    if (a.post_on) {
+      POSTDIM.forEach((f) => add("Post intervento", f.label, num(a["pd_" + f.k] || "")));
+      bers("post", "Post intervento");
+      per("PP", "Post intervento – pericolo");
+    }
+    add("Note", "Note di campo", r.problematiche);
+    add("Note", "Interventi proposti", typeof intTxt === "function" ? intTxt(r) : "");
+    add("Note", "Note sugli interventi", r.interventi);
+    return rows;
+  }
+  async function dataXlsx(r) {
+    const rows = [["Sezione", "Voce", "Valore"], ...dataRows(r)];
+    const x = (v) => String(v).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    let prev = "";
+    const body = rows.map((row, k) => {
+      const head = k === 0, nuova = !head && row[0] !== prev; if (!head) prev = row[0];
+      return `<row r="${k + 1}">` + row.map((v, i) => {
+        const ref = "ABC"[i] + (k + 1), st = head ? 1 : i === 0 ? (nuova ? 2 : 3) : 4;
+        if (typeof v === "number") return `<c r="${ref}" s="${st}"><v>${v}</v></c>`;
+        return `<c r="${ref}" s="${st}" t="inlineStr"><is><t xml:space="preserve">${x(i === 0 && !head && !nuova ? "" : v)}</t></is></c>`;
+      }).join("") + "</row>";
+    }).join("");
+    const sheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="${NS}"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols><col min="1" max="1" width="24" customWidth="1"/><col min="2" max="2" width="30" customWidth="1"/><col min="3" max="3" width="44" customWidth="1"/></cols><sheetData>${body}</sheetData></worksheet>`;
+    const styles = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="${NS}"><fonts count="3"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font><font><b/><sz val="11"/><color rgb="FF2E5E3E"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF2E5E3E"/></patternFill></fill></fills><borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border><left/><right/><top style="thin"><color rgb="FFB7C9BC"/></top><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="5"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/><xf numFmtId="0" fontId="2" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment horizontal="left" vertical="top" wrapText="1"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
+    const z = new JSZip(), R = "http://schemas.openxmlformats.org";
+    z.file("[Content_Types].xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="${R}/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>`);
+    z.file("_rels/.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="${R}/package/2006/relationships"><Relationship Id="rId1" Type="${R}/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`);
+    z.file("xl/workbook.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="${NS}" xmlns:r="${R}/officeDocument/2006/relationships"><sheets><sheet name="Dati ARETE" sheetId="1" r:id="rId1"/></sheets></workbook>`);
+    z.file("xl/_rels/workbook.xml.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="${R}/package/2006/relationships"><Relationship Id="rId1" Type="${R}/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="${R}/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`);
+    z.file("xl/worksheets/sheet1.xml", sheet);
+    z.file("xl/styles.xml", styles);
+    return z.generateAsync({ type: "blob", compression: "DEFLATE", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  }
+
   async function init() {
     L = await (await fetch("arete_lists.json")).json();
   }
 
-  return { init, build, reset, fill, collect, makeXlsx, checkTemplate, specie: () => (L ? L.specie : []) };
+  return { init, build, reset, fill, collect, makeXlsx, dataXlsx, dataRows, checkTemplate, specie: () => (L ? L.specie : []) };
 })();

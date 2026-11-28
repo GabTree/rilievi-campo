@@ -3,7 +3,7 @@
  * salvataggio offline (IndexedDB) e sincronizzazione su OneDrive (Microsoft Graph). */
 "use strict";
 
-const APP_VERSION = "0.5.9b";
+const APP_VERSION = "0.6.0";
 const CFG = window.APP_CONFIG || {};
 // errori imprevisti: mostrati in rosso in alto, per capire subito cosa non va
 function showErr(msg) {
@@ -943,8 +943,7 @@ async function saveForm() {
   const tpl = await DB.getKV("areteTemplate");
   if (r.protocollo === "ARETE" && tpl && window.ARETE_READY) {
     r.arete = ARETE.collect($("#areteBox"));
-    try { r.areteXlsx = await ARETE.makeXlsx(tpl.blob, r); }
-    catch (e) { $("#formErr").textContent = "Errore nella scheda ARETÉ: " + e.message; return; }
+    // dalla 0.6.0 non si compila più la scheda ufficiale: il foglio con i dati si crea al momento dell'invio
     if (r.arete.ubicaz) await DB.setKV("areteRemember", { ubicaz: r.arete.ubicaz });
   }
   r.status = "pending"; delete r.daElenco; r.error = "";
@@ -997,7 +996,8 @@ async function treeFiles(r, o, onlyData) {
     out.push({ path: `Schede/${r.cartella}.docx`, blob: await OUT.schedaDocx(r) });
     if (!onlyData) r.allegati.filter((a) => a.blob).forEach((a) => out.push({ path: `Schede/${r.cartella}_allegato_${safe(a.name)}`, blob: a.blob }));
   }
-  if (o.arete !== false && r.areteXlsx) out.push({ path: `Schede ARETE/${r.cartella}_ARETE.xlsx`, blob: r.areteXlsx });
+  // foglio con i dati ARETÉ (Sezione | Voce | Valore), per compilare poi la scheda ufficiale
+  if (o.arete !== false && r.protocollo === "ARETE" && r.arete && window.ARETE_READY) out.push({ path: `Fogli ARETE/${r.cartella}_dati_ARETE.xlsx`, blob: await ARETE.dataXlsx(r) });
   if (o.foto && !onlyData) r.foto.forEach((f, i) => {
     if (f.ridotta) return; // copia leggera dopo «Libera spazio»: l'originale è già nel cloud
     out.push({ path: "Foto/" + fotoName(r, i), blob: f.clean });
@@ -1028,7 +1028,7 @@ async function projectFiles(name, o) {
   return out;
 }
 let albxAvvisi = [];   // piante escluse dalla tabella per albx (mostrate dopo la sincronizzazione)
-const OUT_LABELS = [["schede", "Schede di valutazione"], ["arete", "Schede ARETÉ"], ["foto", "Foto"],
+const OUT_LABELS = [["schede", "Schede di valutazione"], ["arete", "Foglio per scheda ARETÉ"], ["foto", "Foto"],
   ["riepilogo", "Tabella riassuntiva"], ["vettoriale", "File per QGIS e Google Earth"], ["albx", "Tabella per albx"]];
 function renderOutChecks(box, o, onChange) {
   if (o.arete === undefined) o.arete = true;
@@ -1767,8 +1767,19 @@ async function main() {
     if (await Compass.start()) { $("#btnCompass").classList.add("hidden"); updateCompassUI(Compass); }
   });
   $("#btnNew").addEventListener("click", async () => { Compass.start().then(() => $("#btnCompass").classList.add("hidden")); openForm(); });
+  // Annulla: serve un secondo tocco entro 4 secondi, così non si perde il rilievo per sbaglio
+  let cancelArm = 0, cancelT = null;
+  const disarmCancel = () => { cancelArm = 0; clearTimeout(cancelT); const b = $("#btnFormBack"); b.classList.remove("armed"); b.textContent = "‹ Annulla"; };
   $("#btnFormBack").addEventListener("click", () => {
-    if (draft && draft.foto.length && !confirm("Annullare il rilievo? Le foto scattate andranno perse.")) return;
+    if (draft && Date.now() - cancelArm > 4000) {
+      cancelArm = Date.now();
+      const b = $("#btnFormBack");
+      b.classList.add("armed"); b.textContent = "Tocca ancora per annullare";
+      toast(editingId ? "Tocca ancora «Annulla» per uscire senza salvare le modifiche" : "Tocca ancora «Annulla» per eliminare questo rilievo", 3500);
+      clearTimeout(cancelT); cancelT = setTimeout(disarmCancel, 4000);
+      return;
+    }
+    disarmCancel();
     const back = editingId; editingId = null;
     draft = null; GPS.fixed = null;
     back ? openDetail(back) : show("home");
