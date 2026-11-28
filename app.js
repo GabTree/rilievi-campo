@@ -3,7 +3,7 @@
  * salvataggio offline (IndexedDB) e sincronizzazione su OneDrive (Microsoft Graph). */
 "use strict";
 
-const APP_VERSION = "0.5.9";
+const APP_VERSION = "0.5.9b";
 const CFG = window.APP_CONFIG || {};
 // errori imprevisti: mostrati in rosso in alto, per capire subito cosa non va
 function showErr(msg) {
@@ -863,7 +863,7 @@ function renderThumbs() {
     const chip = !lon ? "" : p.etichettaAltro
       ? `<input class="ltext" data-i="${i}" maxlength="40" placeholder="scrivi l'etichetta…" value="${esc(p.etichetta || "")}"><button type="button" class="lchip lsmall" data-i="${i}">cambia</button>`
       : `<button type="button" class="lchip" data-i="${i}">${p.etichetta ? lblIcon(p.etichetta) + `<span>${esc(lblNome(p.etichetta))}</span>` : "<span>＋ etichetta</span>"}</button>`;
-    d.innerHTML = `<img src="${url}" data-i="${i}"><button class="del" data-i="${i}">×</button>${lblBadge(p, lon)}
+    d.innerHTML = `<div class="pw"><img src="${url}" data-i="${i}">${lblBadge(p, lon)}</div><button class="del" data-i="${i}">×</button>
       ${chip}
       ${S.gradiFoto ? `<div class="cap">${p.heading !== null && p.heading !== undefined ? Math.round(p.heading) + "° " + cardinal(p.heading) : "senza bussola"}${p.compassBad ? " ⚠" : ""}</div>` : ""}`;
     box.appendChild(d);
@@ -1644,7 +1644,7 @@ async function openDetail(id) {
     ["Stato", (STATO[r.status] || [r.status])[0] + (r.error ? " – " + r.error : "")]];
   $("#detKv").innerHTML = kv.filter((x) => x[1]).map(([k, v]) => `<div>${k}</div><div>${esc(v)}</div>`).join("");
   const lon = r.etichetteOn !== false;
-  $("#detThumbs").innerHTML = r.foto.map((f, i) => `<div class="th"><img src="${URL.createObjectURL(f.thumb || f.arrow || f.clean)}" data-i="${i}">${lblBadge(f, lon)}
+  $("#detThumbs").innerHTML = r.foto.map((f, i) => `<div class="th"><div class="pw"><img src="${URL.createObjectURL(f.thumb || f.arrow || f.clean)}" data-i="${i}">${lblBadge(f, lon)}</div>
     ${lon && f.etichetta && f.etichettaAltro ? `<div class="cap ltxtcap">${esc(f.etichetta)}</div>` : ""}
     ${S.gradiFoto && f.heading !== null && f.heading !== undefined ? `<div class="cap">${Math.round(f.heading)}° ${cardinal(f.heading)}</div>` : ""}</div>`).join("");
   $("#detThumbs").querySelectorAll("img").forEach((im) => im.addEventListener("click", () => Viewer.open(r.foto, Number(im.dataset.i))));
