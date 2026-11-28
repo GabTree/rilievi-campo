@@ -3,7 +3,7 @@
  * salvataggio offline (IndexedDB) e sincronizzazione su OneDrive (Microsoft Graph). */
 "use strict";
 
-const APP_VERSION = "0.5.8";
+const APP_VERSION = "0.5.9";
 const CFG = window.APP_CONFIG || {};
 // errori imprevisti: mostrati in rosso in alto, per capire subito cosa non va
 function showErr(msg) {
@@ -796,22 +796,81 @@ async function fillLavori() {
 }
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
-// etichette delle foto (finiscono nella didascalia della scheda Word: «Figura 3 – Colletto»)
-const ETICHETTE = ["Vista generale", "Colletto", "Fusto", "Chioma", "Radici", "Difetto", "Altro"];
+// etichette delle foto (finiscono nella didascalia della scheda Word: «Figura 3 – Colletto»).
+// Ordine: vista generale, poi le parti dal basso verso l'alto, poi anomalia e testo libero.
+const ETICHETTE = ["Vista generale", "Radici", "Colletto", "Fusto", "Castello", "Branca", "Ramo", "Chioma", "Anomalia", "Altro"];
+// piccolo albero stilizzato, sempre uguale, con evidenziata la parte fotografata
+function lblIcon(nome) {
+  const n = nome === "Difetto" ? "Anomalia" : nome;   // i rilievi vecchi con «Difetto»
+  if (n === "Anomalia") return `<svg viewBox="0 0 24 24" class="lico" aria-hidden="true"><path d="M12 3 L22.5 21 H1.5 Z" fill="#e8590c" stroke="#fff" stroke-width="1.2" stroke-linejoin="round"/><rect x="11" y="9" width="2" height="6.5" rx="1" fill="#fff"/><circle cx="12" cy="18" r="1.2" fill="#fff"/></svg>`;
+  if (!ETICHETTE.includes(n) || n === "Altro") return "";
+  const all = n === "Vista generale", on = (k) => all || n === k;
+  const G = all ? "#5b8a63" : "#cdd5cf", H = "#0f7d33", Cg = all ? "#a9d8a9" : "#eef2ee", Ch = "#5cbf68";
+  const col = (k) => (on(k) ? H : G), w = (k) => (on(k) && !all ? 3 : 1.6);
+  return `<svg viewBox="0 0 24 24" class="lico" aria-hidden="true">
+    <ellipse cx="12" cy="8.2" rx="9" ry="6.8" fill="${on("Chioma") ? Ch : Cg}"/>
+    <path d="M12 12.5 L6.5 7.5 M12 12.5 L17.5 7.5 M12 12.5 L12 4.5" stroke="${col("Branca")}" stroke-width="${w("Branca")}" stroke-linecap="round" fill="none"/>
+    <path d="M8.6 9.4 L5 9.2 M15.4 9.4 L19 9.2 M12 7 L9.6 4.4" stroke="${col("Ramo")}" stroke-width="${w("Ramo")}" stroke-linecap="round" fill="none"/>
+    <rect x="${on("Fusto") && !all ? 10.3 : 10.8}" y="12.5" width="${on("Fusto") && !all ? 3.4 : 2.4}" height="6.5" fill="${col("Fusto")}"/>
+    <rect x="${on("Colletto") && !all ? 9.2 : 10.1}" y="${on("Colletto") && !all ? 16.8 : 17.6}" width="${on("Colletto") && !all ? 5.6 : 3.8}" height="${on("Colletto") && !all ? 3 : 2.2}" rx=".8" fill="${col("Colletto")}"/>
+    <circle cx="12" cy="12.6" r="${on("Castello") && !all ? 2.8 : 1.3}" fill="${col("Castello")}"/>
+    <path d="M3.5 19.8 H20.5" stroke="#8a7a66" stroke-width="1" stroke-linecap="round"/>
+    <path d="M12 19.8 L7.5 23 M12 19.8 L16.5 23 M12 19.8 L12 23.4" stroke="${col("Radici")}" stroke-width="${w("Radici")}" stroke-linecap="round" fill="none"/></svg>`;
+}
+const lblNome = (e) => (e === "Difetto" ? "Anomalia" : e);
+// icona sulla foto; per «Altro» niente icona, il testo libero sotto
+function lblBadge(f, on) {
+  if (!on || !f.etichetta) return "";
+  if (f.etichettaAltro) return "";
+  const ic = lblIcon(f.etichetta);
+  return ic ? `<span class="lbadge" title="${esc(lblNome(f.etichetta))}">${ic}</span>` : "";
+}
+const LblPick = {
+  i: -1,
+  open(i) {
+    this.i = i;
+    const cur = draft.foto[i] || {}, sel = cur.etichettaAltro ? "Altro" : lblNome(cur.etichetta || "");
+    $("#lblGrid").innerHTML = ETICHETTE.map((e) => `<button type="button" data-e="${e}" class="${sel === e ? "on" : ""}">${e === "Altro" ? `<span class="lico ltxt">Aa</span>` : lblIcon(e)}<span>${e}</span></button>`).join("");
+    $("#lblGrid").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => this.set(b.dataset.e)));
+    $("#lblPick").classList.remove("hidden");
+  },
+  set(e) {
+    const f = draft.foto[this.i];
+    if (f) {
+      if (e === "Altro") { if (!f.etichettaAltro) f.etichetta = ""; f.etichettaAltro = true; }
+      else { f.etichetta = e; delete f.etichettaAltro; }
+    }
+    this.close();
+    renderThumbs();
+    if (e === "Altro") { const t = $(`#thumbs .ltext[data-i="${this.i}"]`); if (t) t.focus(); }
+  },
+  clear() { const f = draft.foto[this.i]; if (f) { f.etichetta = ""; delete f.etichettaAltro; } this.close(); renderThumbs(); },
+  close() { $("#lblPick").classList.add("hidden"); },
+  bind() {
+    $("#lblNone").addEventListener("click", () => this.clear());
+    $("#lblClose").addEventListener("click", () => this.close());
+    $("#lblPick").addEventListener("click", (ev) => { if (ev.target.id === "lblPick") this.close(); });
+  },
+};
 function renderThumbs() {
   const box = $("#thumbs");
   box.innerHTML = "";
+  const lon = draft.etichetteOn !== false;
   draft.foto.forEach((p, i) => {
     const d = document.createElement("div");
     d.className = "th";
     const url = URL.createObjectURL(p.thumb);
-    d.innerHTML = `<img src="${url}" data-i="${i}"><button class="del" data-i="${i}">×</button>
-      ${draft.etichetteOn === false ? "" : `<select class="lbl" data-i="${i}"><option value="">etichetta…</option>${ETICHETTE.map((e) => `<option${p.etichetta === e ? " selected" : ""}>${e}</option>`).join("")}</select>`}
+    const chip = !lon ? "" : p.etichettaAltro
+      ? `<input class="ltext" data-i="${i}" maxlength="40" placeholder="scrivi l'etichetta…" value="${esc(p.etichetta || "")}"><button type="button" class="lchip lsmall" data-i="${i}">cambia</button>`
+      : `<button type="button" class="lchip" data-i="${i}">${p.etichetta ? lblIcon(p.etichetta) + `<span>${esc(lblNome(p.etichetta))}</span>` : "<span>＋ etichetta</span>"}</button>`;
+    d.innerHTML = `<img src="${url}" data-i="${i}"><button class="del" data-i="${i}">×</button>${lblBadge(p, lon)}
+      ${chip}
       ${S.gradiFoto ? `<div class="cap">${p.heading !== null && p.heading !== undefined ? Math.round(p.heading) + "° " + cardinal(p.heading) : "senza bussola"}${p.compassBad ? " ⚠" : ""}</div>` : ""}`;
     box.appendChild(d);
   });
   box.querySelectorAll("img").forEach((im) => im.addEventListener("click", () => Viewer.open(draft.foto, Number(im.dataset.i))));
-  box.querySelectorAll(".lbl").forEach((sel) => sel.addEventListener("change", () => { draft.foto[Number(sel.dataset.i)].etichetta = sel.value; }));
+  box.querySelectorAll(".lchip").forEach((b) => b.addEventListener("click", () => LblPick.open(Number(b.dataset.i))));
+  box.querySelectorAll(".ltext").forEach((t) => t.addEventListener("input", () => { draft.foto[Number(t.dataset.i)].etichetta = t.value.trim(); }));
   box.querySelectorAll(".del").forEach((b) => b.addEventListener("click", () => { draft.foto.splice(Number(b.dataset.i), 1); renderThumbs(); }));
   $("#camCount").textContent = `${draft.foto.length} foto`;
 }
@@ -1584,7 +1643,9 @@ async function openDetail(id) {
     ["Indagine strumentale", r.strumOn ? `${r.strumento || "sì"}${r.esitoProva ? " · esito " + r.esitoProva.toLowerCase() : ""}` : ""],
     ["Stato", (STATO[r.status] || [r.status])[0] + (r.error ? " – " + r.error : "")]];
   $("#detKv").innerHTML = kv.filter((x) => x[1]).map(([k, v]) => `<div>${k}</div><div>${esc(v)}</div>`).join("");
-  $("#detThumbs").innerHTML = r.foto.map((f, i) => `<div class="th"><img src="${URL.createObjectURL(f.thumb || f.arrow || f.clean)}" data-i="${i}">
+  const lon = r.etichetteOn !== false;
+  $("#detThumbs").innerHTML = r.foto.map((f, i) => `<div class="th"><img src="${URL.createObjectURL(f.thumb || f.arrow || f.clean)}" data-i="${i}">${lblBadge(f, lon)}
+    ${lon && f.etichetta && f.etichettaAltro ? `<div class="cap ltxtcap">${esc(f.etichetta)}</div>` : ""}
     ${S.gradiFoto && f.heading !== null && f.heading !== undefined ? `<div class="cap">${Math.round(f.heading)}° ${cardinal(f.heading)}</div>` : ""}</div>`).join("");
   $("#detThumbs").querySelectorAll("img").forEach((im) => im.addEventListener("click", () => Viewer.open(r.foto, Number(im.dataset.i))));
   show("detail");
@@ -1728,7 +1789,7 @@ async function main() {
   $("#pmFilter").addEventListener("change", (e) => { S.mapFilter = e.target.value; saveSettings(); ProjMap.plot(); });
   $("#btnAreteHelp").addEventListener("click", (e) => { e.preventDefault(); $("#areteHelp").classList.toggle("hidden"); });
   bindSeg("segGradi", (v) => { S.gradiFoto = v === "1"; saveSettings(); setSeg("segGradi", v); });
-  Viewer.bind();
+  Viewer.bind(); LblPick.bind();
   $("#intAdd").addEventListener("change", (e) => { addIntervento(e.target.value); e.target.value = ""; });
   $("#fCpc").addEventListener("change", () => applyRicontrollo(true));
   $("#btnCal").addEventListener("click", () => { const d = $("#fData"); try { d.showPicker(); } catch (e) { d.focus(); d.click(); } });

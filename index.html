@@ -9,7 +9,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="RilieviCampo">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="stylesheet" href="vendor/leaflet.css?v=0.5.8">
+<link rel="stylesheet" href="vendor/leaflet.css?v=0.5.9">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="icon" href="icons/icon-192.png">
 <title>Rilievi di Campo-GabTree</title>
@@ -139,7 +139,22 @@
   .thumbs img { cursor: zoom-in; }
   .scanbtn { margin-left: 6px; border: 1px solid var(--verde); background: #fff; color: var(--verde); border-radius: 10px; font-size: 12px; font-weight: 700; padding: 2px 8px; vertical-align: middle; }
   .copybtn { width: 100%; border: 1px dashed var(--verde); background: var(--chiaro); color: var(--verde); border-radius: 12px; padding: 10px; font-weight: 700; font-size: 15px; margin-bottom: 4px; }
-  .thumbs .lbl { width: 100%; font-size: 12px; padding: 4px; margin-top: 4px; border-radius: 8px; background: #fff; }
+  .lico { width: 22px; height: 22px; flex: 0 0 22px; display: inline-block; }
+  .lbadge { position: absolute; top: 4px; left: 4px; width: 36px; height: 36px; border-radius: 50%; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.35); display: flex; align-items: center; justify-content: center; pointer-events: none; }
+  .lbadge .lico { width: 30px; height: 30px; flex-basis: 30px; }
+  .thumbs .lchip { width: 100%; display: flex; align-items: center; gap: 4px; margin-top: 4px; padding: 3px 6px; border: 1px solid var(--bordo); border-radius: 8px; background: #fff; color: var(--testo); font-size: 12px; min-height: 30px; text-align: left; }
+  .thumbs .lchip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .thumbs .lchip.lsmall { min-height: 24px; justify-content: center; color: var(--verde); font-weight: 700; border-style: dashed; }
+  .thumbs .ltext { width: 100%; font-size: 12px; padding: 5px 6px; margin-top: 4px; border-radius: 8px; border: 1px solid var(--verde); }
+  .ltxtcap { font-weight: 700; color: var(--verde); overflow-wrap: anywhere; }
+  .lsheet { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 1200; display: flex; align-items: flex-end; }
+  .lsheet > div { background: #fff; width: 100%; border-radius: 18px 18px 0 0; padding: 14px 14px calc(14px + var(--safe-bot)); max-height: 80dvh; overflow: auto; }
+  .lsheet h3 { margin: 0; flex: 1; color: var(--verde); font-size: 17px; }
+  .lgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 12px 0; }
+  .lgrid button { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 10px 4px; border: 2px solid var(--bordo); border-radius: 12px; background: #fff; font-size: 13px; color: var(--testo); }
+  .lgrid button.on { border-color: var(--verde); background: var(--chiaro); font-weight: 700; }
+  .lgrid .lico { width: 34px; height: 34px; flex-basis: 34px; }
+  .lgrid .ltxt { font-size: 18px; font-weight: 800; color: var(--grigio); line-height: 34px; text-align: center; }
   .cpc-legend { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 8px; font-size: 14px; }
   .cpc-legend span { display: inline-flex; align-items: center; gap: 5px; }
   .cpc-legend i { width: 14px; height: 14px; border-radius: 50%; display: inline-block; border: 1px solid #333; }
@@ -591,6 +606,11 @@
     <button type="button" class="big" id="clUse" disabled>Usa questa altezza</button>
   </div>
 </div>
+<div id="lblPick" class="lsheet hidden"><div>
+  <div style="display:flex;align-items:center;gap:8px"><h3>Cosa mostra la foto?</h3><button type="button" class="iconbtn" id="lblClose" aria-label="Chiudi">✕</button></div>
+  <div class="lgrid" id="lblGrid"></div>
+  <button type="button" class="big sec" id="lblNone">Nessuna etichetta</button>
+</div></div>
 <div id="viewer" class="viewer hidden">
   <div class="vtop"><button type="button" class="vbtn" id="vBack" aria-label="Indietro">←</button><span id="vCount"></span>
     <button type="button" class="vbtn small hidden" id="vArrow">Con freccia N</button></div>
@@ -616,19 +636,19 @@
 <div class="toast" id="toast"></div>
 <div id="errBanner" class="hidden"></div>
 
-<script src="config.js?v=0.5.8"></script>
-<script src="vendor/msal-browser.min.js?v=0.5.8"></script>
-<script src="vendor/piexif.js?v=0.5.8"></script>
-<script src="vendor/jszip.min.js?v=0.5.8"></script>
-<script src="vendor/docx.min.js?v=0.5.8"></script>
-<script src="vendor/qrcode.js?v=0.5.8"></script>
-<script src="vendor/leaflet.js?v=0.5.8"></script>
-<script src="arete.js?v=0.5.8"></script>
-<script src="output.js?v=0.5.8"></script>
-<script src="install.js?v=0.5.8"></script>
-<script src="viewer.js?v=0.5.8"></script>
-<script src="tools.js?v=0.5.8"></script>
-<script src="app.js?v=0.5.8"></script>
-<script src="import.js?v=0.5.8"></script>
+<script src="config.js?v=0.5.9"></script>
+<script src="vendor/msal-browser.min.js?v=0.5.9"></script>
+<script src="vendor/piexif.js?v=0.5.9"></script>
+<script src="vendor/jszip.min.js?v=0.5.9"></script>
+<script src="vendor/docx.min.js?v=0.5.9"></script>
+<script src="vendor/qrcode.js?v=0.5.9"></script>
+<script src="vendor/leaflet.js?v=0.5.9"></script>
+<script src="arete.js?v=0.5.9"></script>
+<script src="output.js?v=0.5.9"></script>
+<script src="install.js?v=0.5.9"></script>
+<script src="viewer.js?v=0.5.9"></script>
+<script src="tools.js?v=0.5.9"></script>
+<script src="app.js?v=0.5.9"></script>
+<script src="import.js?v=0.5.9"></script>
 </body>
 </html>
